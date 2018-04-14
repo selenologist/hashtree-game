@@ -1,0 +1,52 @@
+digraph proto{
+    compound=true;
+    subgraph clusterServer{
+        label="Master Server";
+        center=true;
+        color=red;
+
+        root_blockstore [label="block", shape=cylinder];
+        
+        verifier -> root_blockstore;
+        bus -> root_blockstore [dir=both];
+    }
+    subgraph clusterPeer{
+        label="Peer A";
+        color=green;
+
+        blockstore [label="block", shape=cylinder];
+        signer;
+        realtime;
+
+        subgraph clusterPeerInternal{
+            label="";
+            color=white;
+
+            update [fontsize="9", width="0", height="0", margin="0"];
+            walk [fontsize="9", width="0", height="0", margin="0"];
+            chat [fontsize="9", width="0", height="0", margin="0"];
+        }
+        
+        update -> signer;
+        walk -> realtime;
+        chat -> realtime;
+    }
+    subgraph clusterOtherPeer{
+        label="Peer B";
+        color=blue;
+        
+        peer_blockstore [label="block", shape=cylinder];
+        peer_realtime [label="realtime"];
+        peer_signer [label="signer"];
+    }
+    
+    signer        -> verifier [color=green, weight=10];
+    peer_signer   -> verifier [color=blue, weight=5];
+    realtime      -> bus [dir="both"] [color=green, weight=10];
+    peer_realtime -> bus [dir="both"] [color=blue, weight=5];
+
+    root_blockstore -> blockstore [color=red, weight=20];
+    root_blockstore -> peer_blockstore [color=red];
+    blockstore      -> peer_blockstore [dir="both", color=purple];
+}
+

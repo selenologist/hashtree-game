@@ -1,0 +1,15 @@
+digraph verifier{
+    GetSignedUpdate [shape=invhouse];
+    GetLast [label="GetLastUpdate", shape=cylinder];
+    PerformUpdate [shape=box];
+    StoreVerifiedData [shape=cylinder];
+
+    GetSignedUpdate -> GetLast [color=green];
+    GetSignedUpdate -> SignFail [color=red];
+    GetLast -> PerformUpdate [color=green];
+    GetLast -> LastUpdateFail [color=red];
+    PerformUpdate -> StoreVerifiedData [color=green];
+    PerformUpdate -> UpdateFail [color=red];
+    StoreVerifiedData -> StoreSuccess [color=green];
+    StoreVerifiedData -> StoreFail [color=red];
+}

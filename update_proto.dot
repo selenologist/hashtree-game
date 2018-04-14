@@ -1,0 +1,43 @@
+digraph update{
+    compound=true;
+    
+    block  [shape=cylinder];
+    block -> data [color=green, label=decode];
+
+    subgraph clusterUpdate{
+        update [label="Update", shape=box];
+
+        update -> command;
+        update -> last;
+        last -> block [color=blue, label="hash"];
+    }
+    //last -> data [color=blue, label="present"];
+
+    subgraph clusterCommands{
+        label="Example Commands";
+        margin=0;
+        pad=0.0;
+        UpdateTileset[fontsize=8, width=0,height=0, margin=0,shape=parallelogram];
+        UpdateMap[fontsize=8, width=0,height=0, margin=0,shape=parallelogram];
+        BattleLog[fontsize=8, width=0,height=0, margin=0,shape=parallelogram];
+    }
+    command -> UpdateTileset [lhead=clusterCommands];
+
+
+    subgraph clusterData{
+        data [label="VerifiedData", shape=box];
+        data_update [label="SignedUpdate", shape=box];
+        data -> value;
+        data -> data_update;
+        data -> block [color=red, label="store"];
+    }
+
+    verifier[shape=diamond];
+    SignedUpdate -> verifier [label="sent to", style="dashed"];
+    verifier -> data [label="result"];
+
+    client[shape=diamond];
+    SignedUpdate [shape=box];
+    SignedUpdate -> update;
+    client -> SignedUpdate;
+}
