@@ -88,7 +88,7 @@ impl BlockStoreThread{
         // hash data
         let hash_binary = Sha256::digest(data.as_slice());
         let hash_string = base64::encode_config(hash_binary.as_slice(),
-                          base64::URL_SAFE);
+                          base64::URL_SAFE_NO_PAD);
         // create file named after the sha256sum of its contents
         let full_path = self.directory.join(Path::new(&hash_string));
         let file = fs::OpenOptions::new()

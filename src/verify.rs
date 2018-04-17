@@ -1,5 +1,5 @@
 use futures::{Future, future::IntoFuture};
-use sodiumoxide::crypto::sign::ed25519::{PublicKey, SecretKey};
+use sodiumoxide::crypto::sign::ed25519::{gen_keypair, PublicKey, SecretKey};
 use serde::{Serialize, Deserialize};
 use rmp_serde::{to_vec as serialize, from_slice as deserialize};
 use serde_json::{to_writer as serialize_file, from_reader as deserialize_file};
@@ -72,7 +72,9 @@ impl From<VerifyError> for VerifierError{
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Verifier{
+    #[serde(with="base64_url_safe_no_pad_pub")]
     pub pubkey:  PublicKey,
+    #[serde(with="base64_url_safe_no_pad_sec")]
     pub secret:  SecretKey,
     pub allowed: AllowedKeys,
     pub latest:  Rc<RefCell<Option<BlockHash>>>,
@@ -195,3 +197,16 @@ impl Verifier{
             ).wait()
     }
 }
+
+impl Default for Verifier{
+    fn default() -> Self{
+        let (verifier_pk, verifier_sk) = gen_keypair();
+        Verifier{
+            pubkey: verifier_pk,
+            secret: verifier_sk,
+            allowed: HashTrieSet::new(),
+            latest: Rc::new(RefCell::new(None)),
+        }
+    }
+}
+

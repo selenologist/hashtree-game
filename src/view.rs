@@ -15,7 +15,8 @@ use signed::*;
 use block::{self, *}; 
 
 type NavigationString = String;
-type NavigationList = Vec<(NavigationString, Box<Fn(BlockStore) -> NavigationResult>)>;
+type NavigationFunction = Box<Fn(BlockStore) -> NavigationResult>;
+type NavigationList = Vec<(NavigationString, NavigationFunction)>;
 // new enum instead of type alias to permit cyclic closure
 enum NavigationResult{
     NOk(NavigationList),
@@ -44,20 +45,21 @@ fn decode_vd<T>(block_store: BlockStore, block_hash: BlockHash) -> NavigationRes
                     return NErr(format!("invalid VerifiedData: {:?}", e));
                 }
             };
-            println!("{:?} result:\n\tvalue: {:?}", block_hash, verified.value);
+            let signed_user_b64 = base64::encode_config(&signed.user, base64::URL_SAFE_NO_PAD);
+            println!("{:?} verified by {}:\n\tvalue: {:?}", block_hash, signed_user_b64, verified.value);
             if let Some(update) = verified.update{
                 let update_user = update.user.clone();
-                let key_str = base64::encode(&update_user);
+                let update_user_b64 = base64::encode_config(&update_user, base64::URL_SAFE_NO_PAD);
                 match update.verify::<Update<TestCommand>>(&allow_any.insert(update_user)){
                     Ok(update) => {
-                        let time = chrono::Utc.timestamp(update.timestamp.to_u64() as i64, 0).to_rfc3339();
-                        println!("\tupdate:\n\t\tby key {}\n\t\tat {}\n\t\tto last {:?}", key_str, time, update.last);
+                        let time = chrono::Local.timestamp(update.timestamp.to_u64() as i64, 0).to_rfc3339();
+                        println!("\tupdate:\n\t\tby key {}\n\t\tat {}\n\t\tto last {:?}", update_user_b64, time, update.last);
                         let update_last = update.last.clone();
                         let next_fn = Box::new(move |bs: BlockStore| -> NavigationResult {decode_vd::<T>(bs, update_last.clone())});
                         next.push(("last".into(), next_fn));
                     },
                     Err(err) => {
-                        return NErr(format!("\tinvalid update {:?} by {:?}", err, update_user));
+                        return NErr(format!("\tinvalid update {:?} by {}", err, update_user_b64));
                     }
                 }
             }
@@ -75,7 +77,7 @@ fn decode_vd<T>(block_store: BlockStore, block_hash: BlockHash) -> NavigationRes
     }
 }
 
-fn navigate<F>(block_store: BlockStore, depth: usize, f: Box<F>)
+fn navigate<F>(block_store: &BlockStore, depth: usize, f: Box<F>)
     where F: Fn(BlockStore) -> NavigationResult + ?Sized
 {
     use self::NavigationResult::*;
@@ -101,7 +103,7 @@ fn navigate<F>(block_store: BlockStore, depth: usize, f: Box<F>)
             let i = i - 1;
             // move next[i] out of next
             let (_, next_f) = next.into_iter().nth(i).unwrap();
-            navigate(block_store.clone(), depth + 1, next_f);
+            navigate(block_store, depth + 1, next_f);
         }
         else{
             println!("*N* Invalid input.");
@@ -115,6 +117,6 @@ pub fn main<T>(block_string: String)
     let block_store = block::spawn_thread(PathBuf::from("public/blocks/"));
     let block_hash = BlockHash(Arc::new(block_string));
     let next = Box::new(move |bs: BlockStore| -> NavigationResult {decode_vd::<T>(bs, block_hash.clone())});
-    navigate(block_store, 0, next);
+    navigate(&block_store, 0, next);
 }
 

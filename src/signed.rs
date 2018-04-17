@@ -1,7 +1,12 @@
 use serde::{Serialize, de::DeserializeOwned};
+use serde_json::{to_writer as serialize_file, from_reader as deserialize_file};
 use rmp_serde::{to_vec as serialize, from_slice as deserialize};
 use sodiumoxide::crypto::sign::ed25519::{sign as crypto_sign, verify as crypto_verify, PublicKey, SecretKey};
 use rpds::HashTrieSet;
+
+use std::io;
+use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Signed{
@@ -48,5 +53,74 @@ impl Signed{
         let result = deserialize::<T>(&data[..]).map_err(|_| VerifyError::DecodeFailed)?;
 
         Ok(result)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct KeyPair{
+    #[serde(with="base64_url_safe_no_pad_pub")]
+    pub pubkey: PublicKey,
+    #[serde(with="base64_url_safe_no_pad_sec")]
+    pub secret: SecretKey
+}
+
+impl KeyPair{
+    pub fn from_file<P: AsRef<Path>>(path: P) -> io::Result<KeyPair>{
+        use std::io::{Error, ErrorKind};
+        deserialize_file(fs::File::open(path)?).map_err(|e| match e {
+            _ => Error::new(ErrorKind::InvalidData, e)
+        })
+    }
+    pub fn to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()>{
+        use std::io::{Error, ErrorKind};
+        serialize_file(&mut fs::File::create(path)?, &self).map_err(|e| match e{
+            _ => Error::new(ErrorKind::InvalidInput, e)
+        })
+    }
+}
+
+pub mod base64_url_safe_no_pad_pub{
+    use serde::{Deserialize, Serializer, Deserializer};
+    use base64::{self, URL_SAFE_NO_PAD};
+    use super::PublicKey;
+    pub fn serialize<S>(t: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer
+    {
+        let s = base64::encode_config(t.as_ref(), URL_SAFE_NO_PAD);
+        serializer.serialize_str(&s)
+    }
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PublicKey, D::Error>
+        where D: Deserializer<'de>
+    {
+        use serde::de::Error;
+        let s = String::deserialize(deserializer)?;
+        let bytes = base64::decode_config(&s, URL_SAFE_NO_PAD)
+            .map_err(|e| Error::custom(e.to_string()))?;
+        let key = PublicKey::from_slice(&bytes[..])
+            .ok_or_else(|| Error::custom("Failed to decode PublicKey"));
+        key
+    }
+}
+pub mod base64_url_safe_no_pad_sec{
+    use serde::{Deserialize, Serializer, Deserializer};
+    use base64::{self, URL_SAFE_NO_PAD};
+    use super::SecretKey;
+    pub fn serialize<S>(t: &SecretKey, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer
+    {
+        let &SecretKey(ref slice) = t;
+        let s = base64::encode_config(&slice[..], URL_SAFE_NO_PAD);
+        serializer.serialize_str(&s)
+    }
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SecretKey, D::Error>
+        where D: Deserializer<'de>
+    {
+        use serde::de::Error;
+        let s = String::deserialize(deserializer)?;
+        let bytes = base64::decode_config(&s, URL_SAFE_NO_PAD)
+            .map_err(|e| Error::custom(e.to_string()))?;
+        let key = SecretKey::from_slice(&bytes[..])
+            .ok_or_else(|| Error::custom("Failed to decode SecretKey"));
+        key
     }
 }
