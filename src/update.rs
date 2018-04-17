@@ -1,30 +1,19 @@
-use serde::{Serialize, Deserialize};
+use serde::{Serialize};
 
-use std::marker::PhantomData;
+//use std::marker::PhantomData;
 
 use verify::*;
 use block::*;
 
-pub trait Command<'a>: Serialize + Deserialize<'a>{
-    type In: Serialize + Deserialize<'a>;
-    type Out: Serialize;
-    fn process(&self, input: Self::In) -> Result<Self::Out, ()>;
-    fn into_update(self, last: BlockHash) -> Update<'a, Self::In, Self>{
-        Update{
-            timestamp: SerializableTime::from_system_now().unwrap(),
-            command: self,
-            last,
-            phantom: PhantomData
-        }
-    }
+pub trait Command<T: Sized + Serialize>: Serialize{
+    fn process(&self, input: T) -> Result<T, ()>;
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Update<'a, T: 'a + Serialize + Deserialize<'a>, C: Command<'a, In=T, Out=T>>{ 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Update<T>{ 
   pub timestamp: SerializableTime,
-  pub command: C,
+  pub command: T,
   pub last:    BlockHash,
-  phantom: PhantomData<&'a T>
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Default)]
@@ -35,16 +24,23 @@ pub enum TestCommand{
     Add(u64)
 }
 
-impl<'d> Command<'d> for TestCommand{
-    type In = TestObject;
-    type Out = TestObject;
-    fn process(&self, input: Self::In) -> Result<Self::Out, ()>{
+impl TestCommand{
+    pub fn into_update(self, last: BlockHash) -> Update<TestCommand>{
+        Update{
+            timestamp: SerializableTime::from_system_now().unwrap(),
+            command: self,
+            last,
+        }
+    }
+}
+
+impl Command<TestObject> for TestCommand{
+    fn process(&self, input: TestObject) -> Result<TestObject, ()>{
         match *self{
             TestCommand::Add(y) => {
                 let TestObject(x) = input;
                 Ok(TestObject(x + y))
             },
-            _ => Err(())
         }
     }
 }
