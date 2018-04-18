@@ -38,6 +38,8 @@ fn decode_vd<T>(block_store: BlockStore, block_hash: BlockHash) -> NavigationRes
                     return NErr(format!("{:?} failed to decode to Signed: {:?}", block_hash, e));
                 }
             };
+            let signed_user_b64 = base64::encode_config(&signed.user, base64::URL_SAFE_NO_PAD);
+
             let allow_any = HashTrieSet::new().insert(signed.user.clone());
             let verified = match signed.verify::<VerifiedData<T>>(&allow_any){
                 Ok(u) => u,
@@ -45,16 +47,19 @@ fn decode_vd<T>(block_store: BlockStore, block_hash: BlockHash) -> NavigationRes
                     return NErr(format!("invalid VerifiedData: {:?}", e));
                 }
             };
-            let signed_user_b64 = base64::encode_config(&signed.user, base64::URL_SAFE_NO_PAD);
+            
             println!("{:?} verified by {}:\n\tvalue: {:?}", block_hash, signed_user_b64, verified.value);
             if let Some(update) = verified.update{
                 let update_user = update.user.clone();
                 let update_user_b64 = base64::encode_config(&update_user, base64::URL_SAFE_NO_PAD);
+
                 match update.verify::<Update<TestCommand>>(&allow_any.insert(update_user)){
                     Ok(update) => {
                         let time = chrono::Local.timestamp(update.timestamp.to_u64() as i64, 0).to_rfc3339();
-                        println!("\tupdate:\n\t\tby key {}\n\t\tat {}\n\t\tto last {:?}", update_user_b64, time, update.last);
                         let update_last = update.last.clone();
+                        
+                        println!("\tupdate:\n\t\tby key {}\n\t\tat {}\n\t\tto last {:?}", update_user_b64, time, update_last);
+                        
                         let next_fn = Box::new(move |bs: BlockStore| -> NavigationResult {decode_vd::<T>(bs, update_last.clone())});
                         next.push(("last".into(), next_fn));
                     },

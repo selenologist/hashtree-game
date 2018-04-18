@@ -1,7 +1,7 @@
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{to_writer as serialize_file, from_reader as deserialize_file};
 use rmp_serde::{to_vec as serialize, from_slice as deserialize};
-use sodiumoxide::crypto::sign::ed25519::{sign as crypto_sign, verify as crypto_verify, PublicKey, SecretKey};
+use sodiumoxide::crypto::sign::ed25519::{sign as crypto_sign, verify as crypto_verify, gen_keypair, PublicKey, SecretKey};
 use rpds::HashTrieSet;
 
 use std::io;
@@ -56,7 +56,7 @@ impl Signed{
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct KeyPair{
     #[serde(with="base64_url_safe_no_pad_pub")]
     pub pubkey: PublicKey,
@@ -71,6 +71,20 @@ impl KeyPair{
             _ => Error::new(ErrorKind::InvalidData, e)
         })
     }
+    pub fn from_file_or_new<P: AsRef<Path> + Clone>(path: P) -> KeyPair{
+        Self::from_file(path.clone())
+            .unwrap_or_else(move |e|{
+                info!("Failed to open keypair file {:?} ({:?}), creating new keypair",
+                      path.as_ref(), e);
+                let (pubkey, secret) = gen_keypair();
+                let kp = KeyPair{
+                    pubkey, secret
+                };
+                kp.to_file(path).unwrap();
+                kp
+            })
+    }
+
     pub fn to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()>{
         use std::io::{Error, ErrorKind};
         serialize_file(&mut fs::File::create(path)?, &self).map_err(|e| match e{

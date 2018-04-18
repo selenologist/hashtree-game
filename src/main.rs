@@ -38,11 +38,25 @@ extern crate chrono;
 #[macro_use]
 extern crate text_io;
 
+extern crate ws;
+
+extern crate rand;
+
+extern crate hyper;
+extern crate mime;
+
+extern crate regex;
+
+#[macro_use]
+extern crate lazy_static;
+
 //mod router;
 mod block;
 mod signed;
 mod verify;
 mod update;
+mod websocket;
+mod http;
 
 mod run;
 mod view;

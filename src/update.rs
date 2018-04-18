@@ -1,4 +1,5 @@
 use serde::{Serialize};
+use rpds::HashTrieMap;
 
 //use std::marker::PhantomData;
 
@@ -44,3 +45,32 @@ impl Command<TestObject> for TestCommand{
         }
     }
 }
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+pub struct TileId(u8);
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct Tileset{
+    // this would use a lot less memory if we implemented a Verifier-side cache that kept objects
+    // in-memory indexed by their hash when serialized, so that they aren't retrieved from the
+    // serialized copy.
+    pub tile_png: HashTrieMap<TileId, BlockHash>
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TilesetCommand{
+    Set(TileId, BlockHash),
+}
+
+impl Command<Tileset> for TilesetCommand{
+    fn process(&self, old: Tileset) -> Result<Tileset, ()>{
+        match *self{
+            TilesetCommand::Set(id, ref hash) => {
+                Ok(Tileset{
+                    tile_png: old.tile_png.insert(id, hash.clone())
+                })
+            },
+        }
+    }
+}
+

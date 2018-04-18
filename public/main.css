@@ -1,0 +1,41 @@
+html{
+    background-color: #6466A5;
+    color: #C8C9E2;
+    font-family: monospace;
+}
+
+h1{
+    text-align: center;    
+}
+
+body{
+    margin-top: 10%;
+    margin-left: auto;
+    margin-right: auto;
+    width: 80%;
+    position: relative;
+}
+
+div{
+    width: 100%;
+    border-radius: 10px;
+    background-color: #803887;
+}
+
+p{
+    color: #DDC0DE;
+}
+
+ul, ol{
+    display: block;
+    border-radius: 10px;
+    background-color: #843887;
+}
+
+/* even and odd */
+.od{
+    background-color: #B3A1CC;
+}
+.ev{
+    background-color: #A6A7CF;
+}

@@ -16,6 +16,7 @@ use std::thread;
 use std::io::{self, Read, Write};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::fmt::{self, Debug};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BlockHash(pub Arc<String>);
@@ -49,6 +50,12 @@ impl BlockStore{
             Err(e) => debug!("Failed to send Set to BlockStore, {:?}", e)
         }
         response
+    }
+}
+
+impl Debug for BlockStore{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
+        write!(f, "BlockStore")
     }
 }
 
@@ -113,7 +120,10 @@ impl BlockStoreThread{
         
         file.write_all(data.as_slice())?;
 
-        Ok(BlockHash(Arc::new(hash_string))) // n.b. duplicates will result from repeated hashes
+        let block_hash = BlockHash(Arc::new(hash_string));
+        self.cache.insert(block_hash.clone(), data);
+
+        Ok(block_hash) // n.b. duplicates will result from repeated hashes
     }
 
     fn run(mut self, receiver: UnboundedReceiver<BlockRequest>){

@@ -149,9 +149,9 @@ impl Verifier{
         let latest = self.latest.clone(); // kept until end
         let command = update.command;
         let last = update.last;
-        let last_block_future = store.get(last.clone());
+        let last_block_future = store.get(last.clone())
+            .map_err(|_| VerifierError::LastErr); // Oneshot::Cancelled
         let sign_future = last_block_future
-            .map_err(|_| VerifierError::LastErr) // Oneshot::Cancelled
             .and_then(move |last_block| -> Result<Arc<Vec<u8>>, VerifierError> {
                 let last_block = last_block.map_err(|_| VerifierError::LastErr)?; // io::Error
                 let last_signed: Signed = deserialize(last_block.as_slice())

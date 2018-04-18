@@ -217,7 +217,10 @@ impl PubSub{
 
         let (sender, receiver) = unbounded_channel();
         
-        (PubSub(sender), thread::spawn(move || Self::run(receiver)))
+        (PubSub(sender),
+         thread::Builder()
+            .name("PubSub".into())
+            .spawn(move || Self::run(receiver)))
     }
 }
 
