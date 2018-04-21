@@ -42,5 +42,21 @@ ul, ol{
 
 #rawmsg{
     background-color: #000;
-    color: #0F2;
+    color: #0F4;
+}
+
+#serverkey, #userkey, #latesttiles{
+    background-color: black;
+}
+
+.wait{
+    color: #04F;
+}
+
+.ok{
+    color: #0F4;
+}
+
+.err{
+    color: #40F;
 }

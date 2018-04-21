@@ -3,7 +3,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{to_string as serialize, from_slice as deserialize};
 use ws::{listen, Handler, Factory, Sender, Handshake, Request, Response as WsResponse, Message, CloseCode};
 use ws::{Error as WsError, ErrorKind as WsErrorKind, Result as WsResult};
-use futures::{Future, Stream};
+use futures::{Future, Stream, future::Either};
 use futures::{sync::{mpsc::{UnboundedReceiver, UnboundedSender,
                             unbounded as unbounded_channel}}};
 use tokio_core;
@@ -11,11 +11,13 @@ use rpds::HashTrieSet;
 
 use std::thread;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::ops::Deref;
 use std::time;
 use std::path::{Path, PathBuf};
+use std::io;
 
-use block::{BlockStore};
+use block::{BlockStore, BlockHash};
 use signed::{Signed, KeyPair, PublicKey};
 use ltime::SerializableTime;
 use map::{self, MapThreadHandle};
@@ -27,11 +29,17 @@ const WEBSOCKET_KEYFILE: &'static str = "secret/websocket_key";
 fn encode<T>(t: &T) -> WsResult<Message> where T: Serialize{
     serialize(t)
         .map(|m| m.into())
-        .map_err(|_e| WsError::new(WsErrorKind::Protocol, "Failed to encode to messagepack"))
+        .map_err(|e|{
+            error!("Failed to encode to websocket {:?}", e);
+            WsError::new(WsErrorKind::Protocol, "Failed to encode to websocket")
+        })
 }
 fn decode<T>(msg: Message) -> WsResult<T> where T: DeserializeOwned{
     deserialize(&msg.into_data()[..])
-        .map_err(|_e| WsError::new(WsErrorKind::Protocol, "Failed to decode from messagepack"))
+        .map_err(|e|{
+            error!("Failed to decode from websocket {:?}", e);
+            WsError::new(WsErrorKind::Protocol, "Failed to decode from websocket")
+        })
 }
 
 #[derive(Serialize)]
@@ -62,7 +70,8 @@ struct ClientAuthResponse{
 impl ClientAuthResponse{
     fn check(&self, server: &ServerAuthChallenge) -> bool{
         use sodiumoxide::crypto::verify::verify_32;
-
+        
+        trace!("Checking ClientAuthResponse");
         let server_chal_time = server.timestamp.to_system();
         let client_resp_time =   self.timestamp.to_system();
         let now_time         = time::SystemTime::now();
@@ -132,9 +141,12 @@ impl Handler for ServerHandler{
                 let response = signed.verify::<ClientAuthResponse>(&allowed)
                     .map_err(|_e| WsError::new(WsErrorKind::Protocol, "Failed to decode Signed ClientAuthResponse"))?;
                 if response.check(&challenge){
+                    trace!("{:?} authenticated!", user_key);
+                    self.out.send(encode(&AuthResponse::AuthOk)?).unwrap();
                     next_state = Some(ClientState::Ready(user_key))
                 }
                 else{
+                    self.out.send(encode(&AuthResponse::AuthErr)?).unwrap();
                     self.out.close_with_reason(CloseCode::Policy, "Failed to authenticate user").unwrap();
                 }
             },
@@ -143,12 +155,20 @@ impl Handler for ServerHandler{
                 let cmd: Command = decode(msg)?;
                 let out = self.out.clone();
                 let fut = match cmd{
-                    Map(req) =>
+                    UploadRaw(bytes) => Either::A(
+                        self.shared.store.set(Arc::new(bytes))
+                            .map_err(|_| ()) // BlockStore hung up its OneshotSender
+                            .map(move |r| out.send(encode(&UploadResponse::from_result(r))?))
+                            .map(|_| ())
+                            .map_err(|_| ())
+                    ),
+                    Map(req) => Either::B(
                         self.shared.map.send(req.0)
                             .map_err(|_| ()) // "MapThread hung up its OneshotSender"
                             .map(move |r| out.send(encode(&r)?))
                             .map(|_| ())
                             .map_err(|_| ()) // encode or send WsError
+                    )
                 };
                 self.shared.defer.unbounded_send(Box::new(fut)).unwrap(); //XXX
             }
@@ -242,11 +262,34 @@ pub fn spawn_thread(block_store: BlockStore, map_thread: MapThreadHandle)
 // command format below
 #[derive(Deserialize, Serialize)]
 enum Command{
+    UploadRaw(Vec<u8>),
     Map(MapCommand)
 }
 
 #[derive(Deserialize, Serialize)]
 struct MapCommand(map::Request);
+
+#[derive(Deserialize, Serialize)]
+enum UploadResponse{
+    UploadOk(BlockHash),
+    UploadErr(String)
+}
+
+impl UploadResponse{
+    fn from_result(result: io::Result<BlockHash>) -> UploadResponse{
+        use self::UploadResponse::*;
+        match result{
+            Ok(k) => UploadOk(k),
+            Err(e) => UploadErr(format!("{:?}", e))
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+enum AuthResponse{
+    AuthOk,
+    AuthErr
+}
 
 fn example<P: AsRef<Path>, S: Serialize>(dir: P, filename: &'static str, message: S)
     -> ::std::io::Result<()>
@@ -277,8 +320,8 @@ fn write_example_messages(){
     let all = move || -> io::Result<()>{
         example(dir, "ServerAuthChallenge", ServerAuthChallenge::new())?;
         example(dir, "MapCommand_TileLibrary_Latest",
-               MapCommand(map::Request::TileLibrary("main".into(),
-                          map::VerifierRequest::Latest)))?;
+               Command::Map(MapCommand(map::Request::TileLibrary("main".into(),
+                                       map::VerifierRequest::Latest))))?;
         let kp = KeyPair::generate();
         let signed = Signed::sign(
             NamedHashCommand::Set("smile".into(),
