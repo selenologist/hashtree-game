@@ -9,13 +9,11 @@
     </head>
     <body>
         <h1>Hash RPG</h1>
-        <h2>Last (Raw) Message</h2>
-        <textarea rows=10 cols=80 id="rawmsg">(none)</textarea>
-        <h3>Server Pubkey: <b id="serverkey" class="wait">Wait</b></h3>
-        <h3>User&nbsp;&nbsp; Pubkey: <b id="userkey" class="wait">Wait</b></h3>
-        <h3>Latest&nbsp;&nbsp;Tiles: <b id="latesttiles" class="wait">Wait</b></h3>
-    <!-- <ul><li>One</li><li>Two</li><li>Three</li></ul> -->
+        <h3>Last (Raw) Message</h3>
+        <textarea rows=6 cols=100 id="rawmsg">(none)</textarea>
+        <table id="debug_table"></table>
+        <div id="upload_zone" class="rounded">Drop files here to upload</div>
     </body>
-    <script>main(); reloader()</script>
+    <script>reloader(); main()</script>
 </html>
 

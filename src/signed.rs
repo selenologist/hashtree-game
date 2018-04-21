@@ -53,7 +53,10 @@ impl Signed{
         let data =
             crypto_verify(&self.data[..], &self.user)
                 .map_err(|_| VerifyError::BadSignature)?;
-        let result = deserialize::<T>(&data[..]).map_err(|_| VerifyError::DecodeFailed)?;
+        let result = deserialize::<T>(&data[..]).map_err(|e|{
+            error!("Failed to decode: {:?}", e);
+            VerifyError::DecodeFailed
+        })?;
 
         Ok(result)
     }

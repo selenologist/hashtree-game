@@ -42,11 +42,25 @@ ul, ol{
 
 #rawmsg{
     background-color: #000;
-    color: #0F4;
+    color: #0F8;
 }
 
-#serverkey, #userkey, #latesttiles{
+#debug_table{
     background-color: black;
+    margin: auto;
+}
+#debug_table th{
+    text-align: left;
+    border-right-style: double;
+    border-right-color: green;
+}
+#debug_table td{
+    text-align: right;
+}
+
+#upload_zone{
+    background-color: #840033;
+    padding: 2em;
 }
 
 .wait{
