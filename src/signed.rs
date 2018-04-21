@@ -1,15 +1,18 @@
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{to_writer as serialize_file, from_reader as deserialize_file};
 use rmp_serde::{to_vec as serialize, from_slice as deserialize};
-use sodiumoxide::crypto::sign::ed25519::{sign as crypto_sign, verify as crypto_verify, gen_keypair, PublicKey, SecretKey};
+use sodiumoxide::crypto::sign::ed25519::{sign as crypto_sign, verify as crypto_verify, gen_keypair};
 use rpds::HashTrieSet;
 
 use std::io;
 use std::fs;
 use std::path::Path;
 
+pub use sodiumoxide::crypto::sign::ed25519::{PublicKey, SecretKey};
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Signed{
+    #[serde(with="base64_public")]
     pub user: PublicKey,
     data: Vec<u8>,
 }
@@ -31,13 +34,13 @@ pub type AllowedKeys = HashTrieSet<PublicKey>;
 pub type SignResult      = Result<Signed, SignError>;
 pub type VerifyResult<T> = Result<T, VerifyError>;
 impl Signed{
-    pub fn sign<T: Serialize>(t: T, user_pk: &PublicKey, user_sk: &SecretKey) -> SignResult
+    pub fn sign<T: Serialize>(t: T, keypair: &KeyPair) -> SignResult
     {
         let serialized = serialize(&t)
             .map_err(|_| SignError::EncodeFailed)?;
-        let signed = crypto_sign(&serialized[..], user_sk);
+        let signed = crypto_sign(&serialized[..], &keypair.secret);
         Ok(Signed{
-            user: user_pk.clone(),
+            user: keypair.public.clone(),
             data: signed,
         })
     }
@@ -56,11 +59,11 @@ impl Signed{
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeyPair{
-    #[serde(with="base64_url_safe_no_pad_pub")]
-    pub pubkey: PublicKey,
-    #[serde(with="base64_url_safe_no_pad_sec")]
+    #[serde(with="base64_public")]
+    pub public: PublicKey,
+    #[serde(with="base64_secret")]
     pub secret: SecretKey
 }
 
@@ -74,12 +77,9 @@ impl KeyPair{
     pub fn from_file_or_new<P: AsRef<Path> + Clone>(path: P) -> KeyPair{
         Self::from_file(path.clone())
             .unwrap_or_else(move |e|{
-                info!("Failed to open keypair file {:?} ({:?}), creating new keypair",
+                error!("Failed to open keypair file {:?} ({:?}), creating new keypair",
                       path.as_ref(), e);
-                let (pubkey, secret) = gen_keypair();
-                let kp = KeyPair{
-                    pubkey, secret
-                };
+                let kp = KeyPair::generate();
                 kp.to_file(path).unwrap();
                 kp
             })
@@ -87,13 +87,20 @@ impl KeyPair{
 
     pub fn to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()>{
         use std::io::{Error, ErrorKind};
-        serialize_file(&mut fs::File::create(path)?, &self).map_err(|e| match e{
-            _ => Error::new(ErrorKind::InvalidInput, e)
-        })
+        ::write_then_rename(
+            path,
+            |writer| serialize_file(writer, &self)
+                .map_err(|e| Error::new(ErrorKind::InvalidInput, e)))
+    }
+
+    
+    pub fn generate() -> KeyPair{
+        let (public, secret) = gen_keypair();
+        KeyPair{ public, secret }
     }
 }
 
-pub mod base64_url_safe_no_pad_pub{
+pub mod base64_public{
     use serde::{Deserialize, Serializer, Deserializer};
     use base64::{self, URL_SAFE_NO_PAD};
     use super::PublicKey;
@@ -115,7 +122,7 @@ pub mod base64_url_safe_no_pad_pub{
         key
     }
 }
-pub mod base64_url_safe_no_pad_sec{
+pub mod base64_secret{
     use serde::{Deserialize, Serializer, Deserializer};
     use base64::{self, URL_SAFE_NO_PAD};
     use super::SecretKey;

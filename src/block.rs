@@ -18,8 +18,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::fmt::{self, Debug};
 
+// XXX intern these?
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BlockHash(pub Arc<String>);
+
+impl From<&'static str> for BlockHash{
+    fn from(s: &'static str) -> BlockHash{
+        BlockHash(Arc::new(String::from(s)))
+    }
+}
 
 pub type         BlockData = Arc<Vec<u8>>;
 pub type  BlockGetResponse = OneshotReceiver<io::Result<BlockData>>;
@@ -98,32 +105,13 @@ impl BlockStoreThread{
                           base64::URL_SAFE_NO_PAD);
         // create file named after the sha256sum of its contents
         let full_path = self.directory.join(Path::new(&hash_string));
-        let file = fs::OpenOptions::new()
-            .write(true)
-            //.create_new(true)
-            .create(true)
-            .open(&full_path);
-        let mut file = match file{
-            Ok(k) => k,
-            Err(e) => /*
-                if e.kind() == io::ErrorKind::AlreadyExists{
-                    // if the file already exists, return the hash now, file on disk
-                    // should already be valid.
-                    // Commented this out because, not really. Files are not removed
-                    // on write failure or power loss.
-                    return Ok(BlockHash(hash_string))
-                }
-                else{ */
-                    return Err(e)
-                //}
-        };
-        
-        file.write_all(data.as_slice())?;
+        ::write_then_rename(full_path,
+                            |file| file.write_all(data.as_slice()))?;
 
         let block_hash = BlockHash(Arc::new(hash_string));
         self.cache.insert(block_hash.clone(), data);
 
-        Ok(block_hash) // n.b. duplicates will result from repeated hashes
+        Ok(block_hash)
     }
 
     fn run(mut self, receiver: UnboundedReceiver<BlockRequest>){

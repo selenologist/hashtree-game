@@ -1,44 +1,23 @@
-use futures::{Future, future::IntoFuture};
-use sodiumoxide::crypto::sign::ed25519::{gen_keypair, PublicKey, SecretKey};
+use futures::{Future, future, future::IntoFuture};
+use sodiumoxide::crypto::sign::ed25519::{PublicKey};
 use serde::{Serialize, Deserialize};
 use rmp_serde::{to_vec as serialize, from_slice as deserialize};
 use serde_json::{to_writer as serialize_file, from_reader as deserialize_file};
-use rpds::HashTrieSet;
+use rpds::{HashTrieSet, HashTrieMap};
 
-use update::*;
-use signed::*;
-use block::*;
+use update::{Update, Command};
+use signed::{Signed, VerifyError, AllowedKeys, KeyPair};
+use block::{BlockHash, BlockStore};
+use ltime::{now_check_stale};
 
 use std::sync::Arc;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::time::{UNIX_EPOCH, Duration, SystemTime, SystemTimeError};
 use std::fmt::Debug;
 use std::io;
 use std::fs;
-use std::path::Path;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SerializableTime(u64); // u64 seconds since unix epoch
-
-impl SerializableTime{
-    pub fn from_system(sys: SystemTime) -> Result<SerializableTime, SystemTimeError>{
-        sys.duration_since(UNIX_EPOCH)
-           .map(|sys_since_unix| SerializableTime(sys_since_unix.as_secs()))
-    }
-    pub fn from_system_now() -> Result<SerializableTime, SystemTimeError>{
-        Self::from_system(SystemTime::now())
-    }
-    pub fn to_system(&self) -> SystemTime{
-        use std::ops::Add;
-        let &SerializableTime(secs_since_epoch) = self;
-        UNIX_EPOCH.clone().add(Duration::from_secs(secs_since_epoch))
-    }
-    pub fn to_u64(&self) -> u64{
-        let &SerializableTime(u) = self;
-        u
-    }
-}
+use std::path::{Path, PathBuf};
+//use std::marker::PhantomData;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VerifiedData<T: Debug + Serialize>{
@@ -46,16 +25,17 @@ pub struct VerifiedData<T: Debug + Serialize>{
     pub update: Option<Signed>, // None if root
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Serialize)]
 pub enum VerifierError{
     DisallowedKey,
     BadSignature,
     DecodeFailed,
-    Stale,     // timestamp too old (replay protection)
-    NotLatest, // newer last value exists
-    LastErr,   // error retrieving last value
-    UpdateErr, // error processing update
-    StoreErr,  // error storing update
+    Stale,      // timestamp too old (replay protection)
+    NotLatest,  // newer last value exists
+    LastErr,    // error retrieving last value
+    UpdateErr,  // error processing update
+    StoreErr,   // error storing update
+    NoVerifier, // used by VerifierMap to indicate there was no verifier by the given name
 }
 
 impl From<VerifyError> for VerifierError{
@@ -72,29 +52,27 @@ impl From<VerifyError> for VerifierError{
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Verifier{
-    #[serde(with="base64_url_safe_no_pad_pub")]
-    pub pubkey:  PublicKey,
-    #[serde(with="base64_url_safe_no_pad_sec")]
-    pub secret:  SecretKey,
+    #[serde(flatten)]
+    pub keypair: KeyPair,
     pub allowed: AllowedKeys,
     pub latest:  Rc<RefCell<Option<BlockHash>>>,
 }
 
 impl Verifier{
     pub fn from_file<P: AsRef<Path>>(path: P) -> io::Result<Verifier>{
-        //use rmp_serde::decode::Error::*;
-        deserialize_file(fs::File::open(path)?).map_err(|e| match e {
-            /*
-            InvalidMarkerRead(e) |
-            InvalidDataRead(e)   => e,
-            */
+        Self::from_reader(fs::File::open(path)?)
+    }
+    pub fn to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()>{
+        self.to_writer(&mut fs::File::create(path)?)
+    }
+    
+    pub fn from_reader<R: io::Read>(rdr: R) -> io::Result<Verifier>{
+        deserialize_file(rdr).map_err(|e| match e {
             _ => io::Error::new(io::ErrorKind::InvalidData, e)
         })
     }
-    pub fn to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()>{
-        /*use rmp_serde::encode::Error::*;
-        use rmp::encode::ValueWriteError;*/
-        serialize_file(&mut fs::File::create(path)?, &self).map_err(|e| match e{
+    pub fn to_writer<W: io::Write>(&self, wtr: W) -> io::Result<()>{
+        serialize_file(wtr, &self).map_err(|e| match e{
             /*
             InvalidValueWrite(ValueWriteError::InvalidMarkerWrite(e)) => e,
             InvalidValueWrite(ValueWriteError::InvalidDataWrite(e)) => e,
@@ -102,25 +80,49 @@ impl Verifier{
             _ => io::Error::new(io::ErrorKind::InvalidInput, e)
         })
     }
+
+
+    pub fn new(with_keypair: Option<KeyPair>, with_allowed: Option<AllowedKeys>,
+               with_latest: Option<BlockHash>)
+        -> Verifier
+    {
+        let keypair = 
+            if let Some(keypair) = with_keypair{
+                keypair
+            }
+            else{
+                KeyPair::generate()
+            };
+        let allowed =
+            if let Some(allowed) = with_allowed{
+                allowed
+            }
+            else{
+                HashTrieSet::new()
+            };
+
+        Verifier{
+            keypair, allowed,
+            latest: Rc::new(RefCell::new(with_latest))
+        }
+    }
+
+
     pub fn add_allowed(&mut self, key: PublicKey){
         self.allowed.insert_mut(key);
     }
+
     pub fn force<T: Serialize + Debug>(&self, store: &BlockStore, input: T) -> BlockHash{ // blocking, panicing, replaces latest
-        let data = VerifiedData{
-            value: input,
-            update: None,
-        };
-        let signeddata = Signed::sign(data, &self.pubkey, &self.secret).unwrap();
-        let hash_result = store
-            .set(Arc::new(serialize(&signeddata).unwrap()))
-            .wait();
+        let hash_result = store_verified(store, input, &self.keypair);
         trace!("force result {:?}", hash_result);
 
-        let hash = hash_result.unwrap().unwrap();
+        let hash = hash_result.unwrap();
         *self.latest.borrow_mut() = Some(hash.clone());
 
         hash
     }
+   
+
     pub fn verify<T: Serialize + Debug, U: Command<T>>(&self, store: &BlockStore, input: Signed)
         -> impl IntoFuture<Item=BlockHash, Error=VerifierError>
         where for <'de> U: Deserialize<'de>,
@@ -141,10 +143,10 @@ impl Verifier{
         }
         
         let timestamp = update.timestamp.to_system();
-        match SystemTime::now().duration_since(timestamp){
-            Ok(duration) if duration.as_secs() < STALE_SECONDS => {}, // do nothing if not stale
-            _ => {return Err(VerifierError::Stale);}
+        if now_check_stale(timestamp, STALE_SECONDS){
+            return Err(VerifierError::Stale);
         }
+        // do nothing if not stale 
 
         let latest = self.latest.clone(); // kept until end
         let command = update.command;
@@ -159,7 +161,9 @@ impl Verifier{
 
                 // only the validator itself should be signing VerifiedData,
                 // therefore only our key should be valid
-                let allow_self = HashTrieSet::new().insert(self.pubkey.clone());
+                let allow_self = HashTrieSet::new()
+                    .insert(self.keypair.public.clone());
+
                 let last: VerifiedData<_> = last_signed
                     .verify(&allow_self)
                     .map_err(|_| VerifierError::LastErr)?;
@@ -173,7 +177,7 @@ impl Verifier{
                     update: Some(input)
                 };
 
-                let signed_verified = Signed::sign(verified, &self.pubkey, &self.secret)
+                let signed_verified = Signed::sign(verified, &self.keypair)
                     .map_err(|_| VerifierError::StoreErr)?;
                 let signed_serialized = serialize(&signed_verified)
                     .map_err(|_| VerifierError::StoreErr)?;
@@ -200,13 +204,133 @@ impl Verifier{
 
 impl Default for Verifier{
     fn default() -> Self{
-        let (verifier_pk, verifier_sk) = gen_keypair();
         Verifier{
-            pubkey: verifier_pk,
-            secret: verifier_sk,
+            keypair: KeyPair::generate(),
             allowed: HashTrieSet::new(),
             latest: Rc::new(RefCell::new(None)),
         }
     }
+}
+
+// not to be confused with a Map Verifier, this maps string keys to verifiers of a certain type
+pub struct VerifierMap{
+    dir:       PathBuf,
+    verifiers: HashTrieMap<String, Verifier> // I don't actually have a good reason for using rpds here
+}
+
+impl VerifierMap{
+    pub fn from_dir<P: AsRef<Path>>(dir: P) -> io::Result<VerifierMap>{
+        use std::ffi::OsStr;
+
+        let mut verifiers = HashTrieMap::new();
+        for rentry in fs::read_dir(dir.as_ref())?{
+            let entry = rentry?;
+            let path  = entry.path();
+            if entry.file_type()?.is_file(){
+                let v = Verifier::from_file(&path)?;
+                let name = path
+                    .file_name()
+                    .and_then(|o: &OsStr| o.to_str())
+                    .and_then(|s: &str| Some(String::from(s)))
+                    .ok_or_else(
+                        || io::Error::new(io::ErrorKind::InvalidInput, 
+                                          format!("Error converting path {:?} to String while loading Verifiers from {:?}",
+                                                  path, dir.as_ref())))?;
+                trace!("Loaded verifier {}/{}", dir.as_ref().display(), name);
+                verifiers.insert_mut(name, v);
+            }
+        }
+        if verifiers.size() == 0{
+            return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("VerifierMap directory {:?} exists but contains no Verifiers", dir.as_ref())));
+        }
+
+        Ok(VerifierMap{
+            dir: ::absolute_pathbuf(dir),
+            verifiers
+        })
+    }
+    pub fn to_new_dir<P: AsRef<Path>>(&self, dir: P) -> io::Result<()>{
+        // ensure dir exists
+        fs::create_dir_all(dir.as_ref())?;
+
+        for (name, verifier) in self.verifiers.iter(){
+            let path = dir.as_ref().join(name);
+            ::write_then_rename(path, move |wtr| verifier.to_writer(wtr))?;
+            trace!("Wrote verifier {}/{}", dir.as_ref().display(), name);
+        }
+
+        Ok(())
+    }
+    pub fn to_dir(&self) -> io::Result<()>{
+        self.to_new_dir(&self.dir)
+    }
+
+
+    pub fn add_new(&mut self, key: String,
+                   with_keypair: Option<KeyPair>,
+                   with_allowed: Option<AllowedKeys>,
+                   with_latest:  Option<BlockHash>)
+        -> io::Result<()>
+    {
+        if self.verifiers.contains_key(&key){
+            debug!("Tried to add new verifier {} when one already exists!", key);
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists,
+                                      format!("Verifier {} already exists", key)));
+        }
+        let v = Verifier::new(with_keypair, with_allowed, with_latest);
+        self.verifiers.insert_mut(key, v);
+
+        Ok(())
+    }
+
+    pub fn new<P: AsRef<Path>>(dir: P) -> VerifierMap{
+        VerifierMap{
+            dir: ::absolute_pathbuf(dir),
+            verifiers: HashTrieMap::default()
+        }
+    }
+
+    pub fn verify<T: Serialize + Debug, U: Command<T>>(&self, store: &BlockStore, input: Signed, key: &String)
+        -> impl Future<Item=BlockHash, Error=VerifierError>
+        where for <'de> U: Deserialize<'de>,
+              for <'de> T: Deserialize<'de>
+    {
+        use ::futures::future::Either; // later versions rename A and B, unfortunately
+        if let Some(value) = self.verifiers.get(key){
+            Either::A(value.verify::<T, U>(store, input).into_future())
+        }
+        else{
+            Either::B(future::err(VerifierError::NoVerifier))
+        }
+    }
+    pub fn latest(&self, key: &String) -> Option<BlockHash>{
+        if let Some(value) = self.verifiers.get(key){
+            value.latest.borrow().clone()
+        }
+        else{
+            None
+        }
+    }
+}
+
+// blocking, panicing
+pub fn store_verified<T: Serialize + Debug>(store: &BlockStore, input: T, keypair: &KeyPair)
+    -> io::Result<BlockHash>
+{
+    let data = VerifiedData{
+        value: input,
+        update: None,
+    };
+    Signed::sign(data, keypair)
+        .map_err(|_| io::Error::new(io::ErrorKind::Other,
+                                    "Failed to sign data for storage"))
+        .and_then(
+            |signed_data|
+            store
+                .set(Arc::new(serialize(&signed_data).unwrap()))
+                .wait()
+                .unwrap())
 }
 

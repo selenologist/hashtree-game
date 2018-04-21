@@ -3,3 +3,5 @@
 **/*.rs.bk
 /secret/*
 /public/blocks/*
+/public/*.js
+!/public/lib/*.js

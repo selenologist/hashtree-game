@@ -1,6 +1,6 @@
 use rmp_serde::{from_slice as deserialize};
 use rpds::HashTrieSet;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Deserialize, Serialize};
 use chrono::{self, TimeZone};
 use futures::Future;
 use base64;
@@ -9,10 +9,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::fmt::Debug;
 
+use update::{Update, Command, TestCommand, TestObject, NamedHash, NamedHashCommand};
+use signed::{Signed};
+use block::{BlockHash, BlockStore, spawn_thread as spawn_block_thread};
 use verify::*;
-use update::*;
-use signed::*;
-use block::{self, *}; 
+
 
 type NavigationString = String;
 type NavigationFunction = Box<Fn(BlockStore) -> NavigationResult>;
@@ -25,8 +26,11 @@ enum NavigationResult{
 
 // XXX: Somehow make this properly generic
 
-fn decode_vd<T>(block_store: BlockStore, block_hash: BlockHash) -> NavigationResult
-    where T: Serialize + DeserializeOwned + Debug
+fn decode_vd<T, C>(block_store: BlockStore, block_hash: BlockHash) -> NavigationResult
+    where T: Serialize + Debug,
+          C: Command<T>,
+    for <'de> T: Deserialize<'de>,
+    for <'de> C: Deserialize<'de>
 {
     use self::NavigationResult::*;
     let mut next: Vec<(NavigationString, Box<Fn(BlockStore) -> NavigationResult>)> = Vec::new();
@@ -53,14 +57,14 @@ fn decode_vd<T>(block_store: BlockStore, block_hash: BlockHash) -> NavigationRes
                 let update_user = update.user.clone();
                 let update_user_b64 = base64::encode_config(&update_user, base64::URL_SAFE_NO_PAD);
 
-                match update.verify::<Update<TestCommand>>(&allow_any.insert(update_user)){
+                match update.verify::<Update<C>>(&allow_any.insert(update_user)){
                     Ok(update) => {
                         let time = chrono::Local.timestamp(update.timestamp.to_u64() as i64, 0).to_rfc3339();
                         let update_last = update.last.clone();
                         
                         println!("\tupdate:\n\t\tby key {}\n\t\tat {}\n\t\tto last {:?}", update_user_b64, time, update_last);
                         
-                        let next_fn = Box::new(move |bs: BlockStore| -> NavigationResult {decode_vd::<T>(bs, update_last.clone())});
+                        let next_fn = Box::new(move |bs: BlockStore| -> NavigationResult {decode_vd::<T, C>(bs, update_last.clone())});
                         next.push(("last".into(), next_fn));
                     },
                     Err(err) => {
@@ -116,12 +120,20 @@ fn navigate<F>(block_store: &BlockStore, depth: usize, f: Box<F>)
     }
 }
 
-pub fn main<T>(block_string: String)
-    where T: Serialize + DeserializeOwned + Debug
+pub fn main(type_string: String, block_string: String)
 {
-    let block_store = block::spawn_thread(PathBuf::from("public/blocks/"));
+    let block_store = spawn_block_thread(PathBuf::from("public/blocks/"));
     let block_hash = BlockHash(Arc::new(block_string));
-    let next = Box::new(move |bs: BlockStore| -> NavigationResult {decode_vd::<T>(bs, block_hash.clone())});
+    let next = Box::new(move |bs: BlockStore| -> NavigationResult {
+        match type_string.as_str(){
+            "test"  =>
+                decode_vd::<TestObject, TestCommand>(bs, block_hash.clone()),
+            "named" =>
+                decode_vd::<NamedHash, NamedHashCommand>(bs, block_hash.clone()),
+            _ =>
+                panic!("Invalid block type {}", type_string)
+        }
+    });
     navigate(&block_store, 0, next);
 }
 

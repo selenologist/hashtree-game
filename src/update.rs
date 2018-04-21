@@ -1,13 +1,13 @@
 use serde::{Serialize};
 use rpds::HashTrieMap;
 
-//use std::marker::PhantomData;
+use std::fmt::{self, Debug};
 
-use verify::*;
-use block::*;
+use block::BlockHash;
+use ltime::SerializableTime;
 
 pub trait Command<T: Sized + Serialize>: Serialize{
-    fn process(&self, input: T) -> Result<T, ()>;
+    fn process(self, input: T) -> Result<T, ()>;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -16,6 +16,40 @@ pub struct Update<T>{
   pub command: T,
   pub last:    BlockHash,
 }
+
+// XXX rename this
+// XXX should cache unserialized blocks so that HashTrieMap can share memory
+/// Maps String names to a BlockHash, maintaining a persistant log like any other Verifier<Command<T>>
+#[derive(Serialize, Deserialize, Default)]
+pub struct NamedHash(HashTrieMap<String, BlockHash>);
+
+// print a little bit prettier so it can actually be read
+impl Debug for NamedHash{
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error>{
+        write!(f, "\nNamedHash{{\n");
+        for (k,v) in self.0.iter(){
+            write!(f, "\t{:?}: {:?}\n", k, v);
+        }
+        write!(f, "}}")
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum NamedHashCommand{
+    Set(String, BlockHash),
+}
+
+impl Command<NamedHash> for NamedHashCommand{
+    fn process(self, old: NamedHash) -> Result<NamedHash, ()>{
+        match self{
+            NamedHashCommand::Set(id, hash) => {
+                Ok(NamedHash(old.0.insert(id, hash)))
+            },
+        }
+    }
+}
+
+
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Default)]
 pub struct TestObject(u64);
@@ -36,8 +70,8 @@ impl TestCommand{
 }
 
 impl Command<TestObject> for TestCommand{
-    fn process(&self, input: TestObject) -> Result<TestObject, ()>{
-        match *self{
+    fn process(self, input: TestObject) -> Result<TestObject, ()>{
+        match self{
             TestCommand::Add(y) => {
                 let TestObject(x) = input;
                 Ok(TestObject(x + y))
@@ -45,32 +79,3 @@ impl Command<TestObject> for TestCommand{
         }
     }
 }
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
-pub struct TileId(u8);
-
-#[derive(Debug, Serialize, Deserialize, Default)]
-pub struct Tileset{
-    // this would use a lot less memory if we implemented a Verifier-side cache that kept objects
-    // in-memory indexed by their hash when serialized, so that they aren't retrieved from the
-    // serialized copy.
-    pub tile_png: HashTrieMap<TileId, BlockHash>
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum TilesetCommand{
-    Set(TileId, BlockHash),
-}
-
-impl Command<Tileset> for TilesetCommand{
-    fn process(&self, old: Tileset) -> Result<Tileset, ()>{
-        match *self{
-            TilesetCommand::Set(id, ref hash) => {
-                Ok(Tileset{
-                    tile_png: old.tile_png.insert(id, hash.clone())
-                })
-            },
-        }
-    }
-}
-

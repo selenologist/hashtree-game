@@ -3,51 +3,42 @@ use futures::{IntoFuture, Future};
 
 use std::path::{PathBuf};
 
-use verify::*;
-use update::*;
-use signed::*;
-use block::{self, *};
+use signed::{KeyPair};
+use block::{self};
 use http;
 use websocket;
+use map;
+use router;
+use rebuilder;
+use reloader;
 
 pub fn main(){
     const BLOCKS_DIR: &'static str = "public/blocks/";
     const ROOTKEY_FILE: &'static str = "secret/root_key";
 
-    //    let (pubsub, _) = router::PubSub::spawn_thread();
+    let pubsub  = router::PubSub::spawn_thread();
+    
+    rebuilder::spawn_thread(pubsub.clone());
+    
     http::spawn_thread();
+    
     let block_store = block::spawn_thread(PathBuf::from(BLOCKS_DIR));
+    
     let root = match KeyPair::from_file(ROOTKEY_FILE){
         Ok(rk) => rk,
         Err(e) => {
-            info!("Failed to load root keypair ({}), creating new one", e);
-            let (pubkey, secret) = gen_keypair();
-            let root = KeyPair{
-                pubkey,
-                secret
-            };
+            error!("Failed to load root keypair ({}), creating new one", e);
+            let root = KeyPair::generate();
             root.to_file(ROOTKEY_FILE).unwrap();
             root
         }
     };
-    let verifier = match Verifier::from_file("secret/test_verifier"){
-        Ok(v) => v,
-        Err(e) => {
-            info!("Failed to load verifier ({}), creating new one", e);
-            let mut v = Verifier::default();
-            v.add_allowed(root.pubkey.clone());
-            info!("New verifier latest {:?}", v.force(&block_store, TestObject::default()));
-            v
-        }
-    };
-    /*verifier.add_allowed(root.pubkey.clone());
-    let command = TestCommand::Add(3);
-    let update = command.into_update(verifier.latest.borrow().clone().unwrap());
-    let signedupdate = Signed::sign(update, &root.pubkey, &root.secret).unwrap();
-    //println!("signedupdate {}", serde_json::to_string_pretty(&signedupdate).unwrap());
-    let after: Result<BlockHash, VerifierError> = verifier.verify::<TestObject, TestCommand>(&block_store, signedupdate).into_future().wait();
-    info!("latest after update {:?}", after);
-    verifier.to_file("secret/test_verifier").unwrap();*/
 
-    websocket::spawn_thread(block_store.clone()).join();
+    let map_thread =
+        map::spawn_thread(block_store.clone(),
+                          root.public.clone());
+    
+    reloader::spawn_thread(pubsub);
+
+    websocket::spawn_thread(block_store, map_thread).join().unwrap();
 }

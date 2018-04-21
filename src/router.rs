@@ -210,17 +210,18 @@ impl PubSub{
         }));
     }
 
-    pub fn spawn_thread<A>() -> (PubSub<A>, thread::JoinHandle<()>)
+    pub fn spawn_thread<A>() -> PubSubHandle<A>
         where A: Any + Sync + Send + Debug
     {
         use self::PubSubUpdate::*;
 
         let (sender, receiver) = unbounded_channel();
         
-        (PubSub(sender),
-         thread::Builder()
+        let _thread = thread::Builder::new()
             .name("PubSub".into())
-            .spawn(move || Self::run(receiver)))
+            .spawn(move || Self::run(receiver));
+
+        PubSubHandle(sender)
     }
 }
 

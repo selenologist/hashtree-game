@@ -16,7 +16,7 @@ body{
     position: relative;
 }
 
-div{
+.rounded{
     width: 100%;
     border-radius: 10px;
     background-color: #803887;
@@ -38,4 +38,9 @@ ul, ol{
 }
 .ev{
     background-color: #A6A7CF;
+}
+
+#rawmsg{
+    background-color: #000;
+    color: #0F2;
 }
