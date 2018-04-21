@@ -26,9 +26,9 @@ pub struct NamedHash(HashTrieMap<String, BlockHash>);
 // print a little bit prettier so it can actually be read
 impl Debug for NamedHash{
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error>{
-        write!(f, "\nNamedHash{{\n");
+        write!(f, "\nNamedHash{{\n")?;
         for (k,v) in self.0.iter(){
-            write!(f, "\t{:?}: {:?}\n", k, v);
+            write!(f, "\t{:?}: {:?}\n", k, v)?;
         }
         write!(f, "}}")
     }

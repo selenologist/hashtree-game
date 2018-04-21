@@ -4,10 +4,9 @@ use futures::{Future, Stream};
 use log::Level;
 
 use std::thread;
-use std::thread::{JoinHandle};
 
 use rebuilder::FileEvent;
-use router::{PubSubHandle, TopicHandle};
+use router::PubSubHandle;
 
 // does nothing but keep the connection open and keep address if trace is on
 #[derive(Default)]

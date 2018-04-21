@@ -49,14 +49,14 @@ td{
     content: "CSS";
 }
 
-.script::after{
+.js::after, .coffee::after{
     content: "Script";
 }
 
-.bin::after{
-    content: "data";
+.file::after{
+    content: "Data";
 }
 
-.htm::after{
+.htm::after, .html::after{
     content: "Page";
 }

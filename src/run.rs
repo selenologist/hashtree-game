@@ -1,6 +1,3 @@
-use sodiumoxide::crypto::sign::ed25519::{gen_keypair};
-use futures::{IntoFuture, Future};
-
 use std::path::{PathBuf};
 
 use signed::{KeyPair};
@@ -15,6 +12,9 @@ use reloader;
 pub fn main(){
     const BLOCKS_DIR: &'static str = "public/blocks/";
     const ROOTKEY_FILE: &'static str = "secret/root_key";
+
+    // quickfix: make sure secret/ exists
+    ::std::fs::create_dir_all("secret/").unwrap();
 
     let pubsub  = router::PubSub::spawn_thread();
     

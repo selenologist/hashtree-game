@@ -1,6 +1,5 @@
 use notify::{DebouncedEvent, Watcher, RecursiveMode, watcher};
 use subprocess::{Exec, ExitStatus};
-use futures::{future, future::Either, Future, Stream, Sink, Poll, Async};
 
 use router::PubSubHandle;
 
@@ -10,7 +9,6 @@ use std::io;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::thread::{JoinHandle};
 use std::sync::Arc;
 
 pub type FilePath = Arc<PathBuf>;

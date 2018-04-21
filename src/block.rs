@@ -13,7 +13,7 @@ use lru_cache::LruCache;
 
 use std::sync::Arc;
 use std::thread;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::fmt::{self, Debug};

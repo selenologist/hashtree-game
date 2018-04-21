@@ -87,24 +87,25 @@ r#"<html><head><link rel="stylesheet" href="/dir.css"/></head><body><h1>Director
             }
             format!("{}{}", last_size, last_suffix)
         };
-        let css_class =
-            if is_dir{
-                "dir"
-            }
-            else{
-                let extension = entry
+
+        let extension = entry
                     .path()
                     .extension()
                     .and_then(|o: &OsStr| o.to_str())
                     .and_then(|s: &str| Some(String::from(s)))
                     .unwrap_or(String::new());
 
+        let css_class =
+            if is_dir{
+                "dir"
+            }
+            else{
                 match extension.as_ref(){
-                    "htm" | "html"  => "htm",
-                    "css"           => "css",
-                    "js" | "coffee" => "script",
-                    "" | "bin"      => "bin",
-                    _               => ""
+                    "htm" | "html" |
+                    "css" |
+                    "js"  | "coffee" => extension.as_ref(),
+
+                    _                => "file"
                 }
             };
 

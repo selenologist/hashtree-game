@@ -138,7 +138,7 @@ impl Handler for ServerHandler{
                     self.out.close_with_reason(CloseCode::Policy, "Failed to authenticate user").unwrap();
                 }
             },
-            Ready(user_key) => {
+            Ready(_user_key) => {
                 use self::Command::*;
                 let cmd: Command = decode(msg)?;
                 let out = self.out.clone();
@@ -150,7 +150,7 @@ impl Handler for ServerHandler{
                             .map(|_| ())
                             .map_err(|_| ()) // encode or send WsError
                 };
-                self.shared.defer.send(Box::new(fut)).unwrap(); //XXX
+                self.shared.defer.unbounded_send(Box::new(fut)).unwrap(); //XXX
             }
         }
         if let Some(next) = next_state{
@@ -227,7 +227,7 @@ pub fn spawn_thread(block_store: BlockStore, map_thread: MapThreadHandle)
                     let handle = core.handle();
                     let fut = defer_recv
                         .for_each(|f| Ok(handle.spawn(f)));
-                    core.run(fut);
+                    core.run(fut).unwrap()
                 }).unwrap();
 
             let mut factory = ServerFactory{

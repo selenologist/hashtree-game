@@ -84,7 +84,7 @@ impl<T: Sync + Send + Debug + 'static> Topic<T>{
             if client.active{
                 match client.sender.unbounded_send(message.clone()){
                     Ok(_)  => true, //valid, keep
-                    Err(e) =>
+                    Err(_e) =>
                         // XXX: log this?
                         false
                 }
@@ -207,14 +207,12 @@ impl PubSub{
                 }
             }
             Ok(())
-        }));
+        })).unwrap();
     }
 
     pub fn spawn_thread<A>() -> PubSubHandle<A>
         where A: Any + Sync + Send + Debug
     {
-        use self::PubSubUpdate::*;
-
         let (sender, receiver) = unbounded_channel();
         
         let _thread = thread::Builder::new()
