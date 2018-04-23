@@ -63,6 +63,28 @@ ul, ol{
     padding: 2em;
 }
 
+#tile_library{
+
+}
+
+.icon{
+    float: left;
+    width: 48px;
+    height: 48px;
+    text-align: center;
+    padding: 0.5em;
+}
+
+.icon img{
+    width: 100%;
+    margin: auto;
+}
+
+.icon tt{
+    background-color: gray;
+}
+
+/*debug text indicators*/
 .wait{
     color: #04F;
 }
@@ -74,3 +96,5 @@ ul, ol{
 .err{
     color: #40F;
 }
+
+

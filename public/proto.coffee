@@ -119,7 +119,32 @@ class sign
         sign.Signed(keypair, data).and_then (s) ->
             Ok([s.user, s.data])
 
+class proto
+    @TileLibrary: (name, req) ->
+        Cmd: 'Map'
+        Data:
+            Obj: 'TileLibrary'
+            Req: [name, req]
+    @UploadRaw: (array) ->
+        Cmd: 'UploadRaw'
+        Data: array
+    @UpdateNamedHash: (name, hash, latest) ->
+        timestamp: [getUnixTime()]
+        command:
+            Cmd: 'Set'
+            Data: [name, hash]
+        last: [latest]
+
+    @VerifierResult: (vr) ->
+        # fuuucking hell. std::Result will be serialized using an integer variant key.
+        # I need a serialization scheme with less friction.
+        if vr[0] == 0 # Ok
+            Ok(vr[1][0]) # BlockHash
+        else # Err
+            Err(vr[1][0].Error) # VerifierError
+
 window.encode = encode
 window.decode = decode
 window.verify = verify
 window.sign   = sign
+window.proto  = proto

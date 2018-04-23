@@ -162,6 +162,7 @@ impl Handler for ServerHandler{
             Ready(_user_key) => {
                 use self::Command::*;
                 let cmd: Command = decode(msg)?;
+                trace!("Got {:?}", cmd);
                 let out = self.out.clone();
                 let fut = match cmd{
                     UploadRaw(bytes) => Either::A(
@@ -269,8 +270,8 @@ pub fn spawn_thread(block_store: BlockStore, map_thread: MapThreadHandle)
 }
 
 // command format below
-#[derive(Deserialize, Serialize)]
-#[serde(tag="Cmd")]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag="Cmd", content="Data")]
 enum Command{
     UploadRaw(Vec<u8>),
     Map(map::Request)
@@ -278,17 +279,17 @@ enum Command{
 
 
 #[derive(Deserialize, Serialize)]
+#[serde(tag="Response", content="Result")]
 enum UploadResponse{
-    UploadOk(BlockHash),
-    UploadErr(String)
+    Ok(BlockHash),
+    Err(String)
 }
 
 impl UploadResponse{
     fn from_result(result: io::Result<BlockHash>) -> UploadResponse{
-        use self::UploadResponse::*;
         match result{
-            Ok(k) => UploadOk(k),
-            Err(e) => UploadErr(format!("{:?}", e))
+            Ok(k) => UploadResponse::Ok(k),
+            Err(e) => UploadResponse::Err(format!("{:?}", e))
         }
     }
 }
@@ -320,8 +321,9 @@ fn write_example_messages(){
     const EXAMPLE_MSG_DIR: &'static str = "example_msg/";
     use std::fs;
     use std::io;
-    use update::NamedHashCommand;
+    use update::{Update, NamedHashCommand};
     use block::BlockHash;
+    use ltime::SerializableTime;
 
     fs::create_dir_all(EXAMPLE_MSG_DIR).expect("Failed to create example message dir");
     let dir = Path::new(EXAMPLE_MSG_DIR);
@@ -331,14 +333,35 @@ fn write_example_messages(){
         example(dir, "MapCommand_TileLibrary_Latest",
                Command::Map(map::Request::TileLibrary("main".into(),
                                                       map::VerifierRequest::Latest)))?;
-        let kp = KeyPair::generate();
-        let signed = Signed::sign(
+
+        let update =
+            Update{
+                timestamp: SerializableTime::from_system_now().unwrap(),
+                command:
             NamedHashCommand::Set("smile".into(),
                                   BlockHash::from("l6RV2N6qQRjHCvKZ47adEXMf51YwEiIj2qiKcs-7L9Y")),
+                last: BlockHash::from("ABC123")
+            };
+        example(dir, "UpdateSmilePresign", update)?;
+
+        let update =
+            Update{
+                timestamp: SerializableTime::from_system_now().unwrap(),
+                command:
+            NamedHashCommand::Set("smile".into(),
+                                  BlockHash::from("l6RV2N6qQRjHCvKZ47adEXMf51YwEiIj2qiKcs-7L9Y")),
+                last: BlockHash::from("ABC123")
+            };
+
+        let kp = KeyPair::generate();
+        let signed = Signed::sign(update,
                                   &kp).unwrap();
         example(dir, "MapCommand_TileLibrary_UpdateMainWithSmile",
                Command::Map(map::Request::TileLibrary("main".into(),
-                                                      map::VerifierRequest::Update(signed))))
+                                                      map::VerifierRequest::Update(signed))))?;
+
+        example(dir, "UploadRaw_hello",
+               Command::UploadRaw("hello".into()))
     };
     all().unwrap_or_else(|e| error!("write_example_messages error: {:?}", e));
 }

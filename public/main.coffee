@@ -22,28 +22,45 @@ addDebugText = (label) ->
     row
 
 get_tile_collection = (latest) ->
+    loc = window.location
+    base_url = loc.protocol + "//" + loc.host + "/"
+    blocks_url = base_url + "blocks/"
     req = new XMLHttpRequest()
     req.responseType = "arraybuffer"
     req.addEventListener("load", ->
-        console.log('resp', this)
         u8 = new Uint8Array(this.response)
         signed = decode.Msgpack(u8).unwrap()
         list = verify.Signed(signed).unwrap()
         library = addDebugText "Tile Library"
+       
+        tile_library = document.getElementById('tile_library')
+        while tile_library.firstChild # remove all existing displayed tiles
+            tile_library.removeChild(tile_library.firstChild)
+
+        add_tile = (name, hash) ->
+            icon = document.createElement('div')
+            icon.className = 'icon'
+            img = document.createElement('img')
+            img.src = blocks_url + hash
+            tt = document.createElement('tt')
+            tt.innerText = name
+            icon.insertAdjacentElement('beforeend', img)
+            icon.insertAdjacentElement('beforeend', tt)
+            tile_library.insertAdjacentElement('beforeend', icon)
+
         if list
-            library.set encode.Json(list).unwrap(), 'ok'
+            library.set encode.Json(list.value).unwrap(), 'ok'
+            for name, hash of list.value[0]
+                add_tile name, hash
         else
             library.set 'Err', 'err'
     )
-    loc = window.location
-    base_url = loc.protocol + "//" + loc.host + "/"
-    url = base_url + "blocks/" + latest
-    console.log("url", url)
+    url = blocks_url + latest
     req.open('GET', url)
     req.send()
 
-getUnixTime = ->
-    Math.round((new Date()).getTime() / 1000)
+window.getUnixTime = ->
+    Math.floor((new Date()).getTime() / 1000)
 
 client = ->
     ws = new WebSocket('ws://127.0.0.1:3001', 'selenologist-hash-rpg')
@@ -60,6 +77,35 @@ client = ->
     dump_loop = (payload) ->
         console.log('dump_loop', payload)
         dump_loop
+
+    check_update_result = (vr) ->
+        next_msg[0] = dump_loop
+        if vr.Response? && vr.Response == "VerifierResult"
+            res = proto.VerifierResult vr.Result
+            if res.is_ok()
+                dbg_state.set("check_update_result update good", 'ok')
+                window.latest = res.inner[0]
+                get_tile_collection(window.latest)
+            else
+                dbg_state.set("check_update_result bad result", 'err')
+        else
+            dbg_state.set("check_update_result wrong message", 'err')
+
+    check_upload_result = (f, result) ->
+        if result.Response? && result.Response == 'Ok'
+            hash = result.Result
+            f.debug.set hash, 'ok'
+            update = proto.UpdateNamedHash(f.name, hash, window.latest)
+            signed = sign.Signed(user_key, update).unwrap()
+            send proto.TileLibrary 'main',
+                Req: 'Update'
+                user: signed.user
+                data: signed.data
+            dbg_state.set("check_update_result", 'wait')
+            next_msg[0] = check_update_result
+        else
+            f.debug.set result, 'err'
+            next_msg[0] = dump_loop
 
     get_latest_tiles = (response) ->
         dbg_state.set("get_latest_tiles", 'ok')
@@ -78,10 +124,7 @@ client = ->
         dbg_state.set("check_auth", 'ok')
         if authresponse.Auth == "Ok"
             dbg_user_key.set(encode.PubkeyB64(user_key.pubkey).unwrap(), 'ok')
-            get_latest =
-                Cmd: 'Map'
-                Obj: 'TileLibrary'
-                Req: ["main", Req: "Latest"]
+            get_latest = proto.TileLibrary "main", Req: "Latest"
             send get_latest
             dbg_state.set("get_latest_tiles", 'wait')
             next_msg[0] = get_latest_tiles
@@ -133,32 +176,18 @@ client = ->
             evt.stopPropagation()
             evt.preventDefault()
             files = evt.dataTransfer.files
-            for file in files
-                console.log('file', file)
-            f = addDebugText 'File Upload'
-            f.set files[0].name, 'wait'
+            f = {}
+            f.debug = addDebugText 'File Upload'
+            f.debug.set files[0].name, 'wait'
+            f.name = files[0].name.replace(/\..*/, '') # strip extension
             reader = new FileReader()
             reader.onloadend = (file) ->
                 array = new Uint8Array(this.result)
                 array = Array.from(array)
-                console.log('array', array)
-                command = UploadRaw: array
-                console.log('cmd', command)
+                command = proto.UploadRaw array
                 send command
-                next_msg[0] = (result) ->
-                    next_msg[0] = dump_loop
-                    if result.UploadOk?
-                        hash = result.UploadOk
-                        f.set hash, 'ok'
-                        update = [
-                            getUnixTime(),
-                            ["smile", result.UploadOk],
-                            window.latest
-                        ]
-                        signed = sign.Signed(user_key, update).unwrap()
-                        send Map: TileLibrary: ['main', Update: signed]
-                    else
-                        f.set result, 'err'
+                dbg_state.set("check_upload_result", 'wait')
+                next_msg[0] = (msg) -> check_upload_result(f, msg)
             reader.readAsArrayBuffer(files[0])
         handle_drag = (evt) ->
             evt.stopPropagation()

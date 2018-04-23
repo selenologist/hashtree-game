@@ -1,6 +1,7 @@
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{to_writer as serialize_readable_file, from_reader as deserialize_readable_file};
 use rmp_serde::{to_vec as serialize_packed, to_vec_named as serialize, from_slice as deserialize};
+use rmpv::{decode::read_value as read_mp_value};
 use sodiumoxide::crypto::sign::ed25519::{sign as crypto_sign, verify as crypto_verify, gen_keypair};
 use rpds::HashTrieSet;
 
@@ -54,6 +55,18 @@ impl Signed{
                 .map_err(|_| VerifyError::BadSignature)?;
         let result = deserialize::<T>(&data[..]).map_err(|e|{
             error!("Failed to decode: {:?}", e);
+
+            let mut rdr = io::Cursor::new(&data[..]);
+            match read_mp_value(&mut rdr){
+                Ok(value) => {
+                    error!("Expected {} got value {:?}",
+                           unsafe{::std::intrinsics::type_name::<T>()}, value);
+                },
+                Err(e) => {
+                    error!("Invalid messagepack {:?}", e);
+                }
+            }
+
             VerifyError::DecodeFailed
         })?;
 

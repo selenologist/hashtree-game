@@ -1,7 +1,7 @@
 use futures::{Future, future, future::IntoFuture};
 use sodiumoxide::crypto::sign::ed25519::{PublicKey};
 use serde::{Serialize, Deserialize};
-use rmp_serde::{to_vec as serialize_packed, to_vec_named as serialize, from_slice as deserialize};
+use rmp_serde::{to_vec_named as serialize, from_slice as deserialize};
 use serde_json::{to_writer as serialize_readable_file, from_reader as deserialize_readable_file};
 use rpds::{HashTrieSet, HashTrieMap};
 
@@ -26,6 +26,7 @@ pub struct VerifiedData<T: Debug + Serialize>{
 }
 
 #[derive(Debug, Copy, Clone, Serialize)]
+#[serde(tag="Error")]
 pub enum VerifierError{
     DisallowedKey,
     BadSignature,
@@ -146,7 +147,6 @@ impl Verifier{
         if now_check_stale(timestamp, STALE_SECONDS){
             return Err(VerifierError::Stale);
         }
-        // do nothing if not stale 
 
         let latest = self.latest.clone(); // kept until end
         let command = update.command;

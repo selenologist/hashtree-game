@@ -15,6 +15,12 @@ class Result
             @inner
         else
             throw @inner
+
+    is_ok: ->
+        @type == 'Ok'
+    is_err: ->
+        @type == 'Err'
+
     and_then: (f) -> # return f(inner) if Ok, else return this
         if @type == 'Ok'
             f(@inner)

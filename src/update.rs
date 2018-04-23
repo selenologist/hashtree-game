@@ -21,7 +21,7 @@ pub struct Update<T>{
 // XXX should cache unserialized blocks so that HashTrieMap can share memory
 /// Maps String names to a BlockHash, maintaining a persistant log like any other Verifier<Command<T>>
 #[derive(Serialize, Deserialize, Default)]
-pub struct NamedHash(HashTrieMap<String, BlockHash>);
+pub struct NamedHash(pub HashTrieMap<String, BlockHash>);
 
 // print a little bit prettier so it can actually be read
 impl Debug for NamedHash{
@@ -35,6 +35,7 @@ impl Debug for NamedHash{
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag="Cmd", content="Data")]
 pub enum NamedHashCommand{
     Set(String, BlockHash),
 }

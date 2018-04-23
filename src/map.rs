@@ -56,7 +56,7 @@ impl MapThread{
         let kp = KeyPair::from_file_or_new(MAP_VERIFIER_KEY);
         let empty_namedhash = // get hash of a namedhash root signed by the MAP_VERIFIER_KEY
             store_verified(&store,
-                           HashTrieMap::<String, Verifier>::new(),
+                           NamedHash(HashTrieMap::<String, BlockHash>::new()),
                            &kp)
             .unwrap(); // XXX handle this properly
                                              
