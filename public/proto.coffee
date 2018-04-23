@@ -1,60 +1,103 @@
-encode =
-    Json: (data) ->
-        JSON.stringify(data)
-    Msgpack: (data) ->
-        msgpack.encode(data)
-    B64: (data) ->
-        str = String.fromCharCode.apply(null, data)
-        window.btoa(str).replace(/\//g, '_').replace(/\+/g, '-')
+class encode
+    @Json: (data) ->
+        try
+            Ok(JSON.stringify(data))
+        catch
+            Err("Failed to encode JSON")
+
+    @Msgpack: (data) ->
+        try
+            Ok(msgpack.encode(data))
+        catch
+            Err("Failed to encode MessagePack")
+
+    @B64: (data) ->
+        try # seems window.btoa can't fail but try/catch anyway
+            str = String.fromCharCode.apply(null, data)
+            Ok(window.btoa(str).replace(/\//g, '_').replace(/\+/g, '-'))
+        catch
+            Err("Failed to encode base64")
     
-    Pubkey: (key) ->
-        encode.B64(key).substring(0, 43)
-    Secret: (key) ->
-        encode.B64(key).substring(0, 86)
+    @PubkeyB64: (key) ->
+        try
+            Ok(encode.B64(key)
+                  .unwrap()
+                  .substring(0, 43)) #ceil(256 bits of key/6 bits per char)
+        catch e
+            Err(e)
+    @SecretB64: (key) ->
+        try
+            Ok(encode.B64(key)
+                  .unwrap()
+                  .substring(0, 86)) #ceil(512 bits of key/6 bits per char)
+        catch e
+            Err(e)
 
-    Keypair: (pubkey, secret) ->
-        j =
-            'public': encode.Pubkey pubkey
-            'secret': encode.Secret secret
-        encode.Json(j)
+    @KeypairB64: (pubkey, secret) ->
+        try
+            Ok('public': (encode.PubkeyB64 pubkey).unwrap()
+               'secret': (encode.SecretB64 secret).unwrap())
+        catch e
+            Err(e)
+    @eypairJson: (pubkey, secret) ->
+        try
+            obj = KeypairB64(pubkey, secret).unwrap()
+            encode.Json(obj)
+        catch e
+            Err(e)
 
-decode =
-    Json: (data) ->
-        JSON.parse(data)
+class decode
+    @Json: (data) ->
+        try
+            Ok(JSON.parse(data))
+        catch
+            Err("Failed to parse JSON")
 
-    Msgpack: (data) ->
-        msgpack.decode(data)
+    @Msgpack: (data) ->
+        try
+            if (data instanceof ArrayBuffer)
+                data = new Uint8Array(data) # convert to Uint8Array from ArrayBuffer
+            Ok(msgpack.decode(data))
+        catch
+            Err("Failed to parse MessagePack")
 
-    B64: (data) ->
-        str = window.atob(data.replace(/_/g, '/').replace(/-/g, '+'))
-        arr = new Uint8Array(str.length)
-        for i in [0..str.length]
-            arr[i] = str.charCodeAt(i)
-        arr
+    @B64: (data) ->
+        try
+            str = window.atob(data.replace(/_/g, '/').replace(/-/g, '+'))
+            arr = new Uint8Array(str.length)
+            for i in [0..str.length]
+                arr[i] = str.charCodeAt(i)
+            Ok(arr)
+        catch
+            Err("Failed to parse base64")
 
-    Pubkey: (key) ->
+    @PubkeyB64: (key) ->
         decode.B64(key)
 
-    Secret:(key) ->
+    @SecretB64:(key) ->
         decode.B64(key)
 
-    Keypair: (encoded) ->
-        j = decode.Json(encoded)
-        pair = {}
-        pair.pubkey = decode.Pubkey(j.public)
-        pair.secret = decode.Secret(j.secret)
-        pair
+    @KeypairB64: (obj) ->
+        pubkey = decode.PubkeyB64(obj.public)
+        pubkey.and_then ->
+            secret = decode.SecretB64(obj.secret)
+            secret.and_then ->
+                pair =
+                    pubkey: pubkey.unwrap() # safe at this point
+                    secret: secret.unwrap()
+                Ok(pair)
+    @KeypairJson: (encoded) ->
+        (decode.Json encoded).and_then (obj) ->
+            decode.KeypairB64 obj
 
-
-verify =
-    Signed: (signed) ->
-        pubkey = decode.B64(signed.user)
-        message = nacl.sign.open(new Uint8Array(signed.data), pubkey)
+class verify
+    @Signed: (signed) ->
+        message = nacl.sign.open(new Uint8Array(signed.data), signed.user)
         if message?
-            decode.Msgpack message
+            Ok(decode.Msgpack message)
         else
-            null
-    Packed: (signed) ->
+            Err("Failed to verify Signed")
+    @Packed: (signed) ->
         s = {
             user: signed[0]
             data: signed[1]
@@ -62,16 +105,19 @@ verify =
         verify.Signed(s)
 
 
-sign =
-    Signed: (keypair, data) ->
-        data = encode.Msgpack data
-        signed =
-            "user": encode.Pubkey keypair.pubkey
-            "data": Array.from(nacl.sign(data, keypair.secret))
-        signed
-    Packed: (keypair, data) ->
-        s = sign.Signed(keypair, data)
-        [s.user, s.data]
+class sign
+    @Signed: (keypair, data) ->
+        try
+            mpack = (encode.Msgpack data).unwrap()
+            signed =
+                user: Array.from(keypair.pubkey)
+                data: Array.from(nacl.sign(mpack, keypair.secret))
+            Ok(signed)
+        catch e
+            Err(e)
+    @Packed: (keypair, data) ->
+        sign.Signed(keypair, data).and_then (s) ->
+            Ok([s.user, s.data])
 
 window.encode = encode
 window.decode = decode

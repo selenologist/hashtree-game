@@ -1,7 +1,7 @@
 #![feature(test)]
 #![feature(nll)]
 #![feature(box_syntax)]
-
+#![feature(core_intrinsics)]
 extern crate test;
 
 extern crate futures;
@@ -16,6 +16,7 @@ extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 extern crate rmp;
+extern crate rmpv;
 extern crate rmp_serde;
 
 #[macro_use]

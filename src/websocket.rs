@@ -1,6 +1,6 @@
 use serde::{Serialize, de::DeserializeOwned};
-//use rmp_serde::{to_vec_named as serialize, from_slice as deserialize};
-use serde_json::{to_string as serialize, from_slice as deserialize};
+use rmp_serde::{to_vec_named as serialize, from_slice as deserialize};
+use rmpv::{decode::read_value as read_mp_value};
 use ws::{listen, Handler, Factory, Sender, Handshake, Request, Response as WsResponse, Message, CloseCode};
 use ws::{Error as WsError, ErrorKind as WsErrorKind, Result as WsResult};
 use futures::{Future, Stream, future::Either};
@@ -35,9 +35,20 @@ fn encode<T>(t: &T) -> WsResult<Message> where T: Serialize{
         })
 }
 fn decode<T>(msg: Message) -> WsResult<T> where T: DeserializeOwned{
-    deserialize(&msg.into_data()[..])
+    let slice = &msg.into_data()[..];
+    deserialize(slice)
         .map_err(|e|{
             error!("Failed to decode from websocket {:?}", e);
+            let mut rdr = io::Cursor::new(slice);
+            match read_mp_value(&mut rdr){
+                Ok(value) => {
+                    error!("Expected {} got value {:?}",
+                           unsafe{::std::intrinsics::type_name::<T>()}, value);
+                },
+                Err(e) => {
+                    error!("Invalid messagepack {:?}", e);
+                }
+            }
             WsError::new(WsErrorKind::Protocol, "Failed to decode from websocket")
         })
 }
@@ -45,8 +56,7 @@ fn decode<T>(msg: Message) -> WsResult<T> where T: DeserializeOwned{
 #[derive(Serialize)]
 struct ServerAuthChallenge{ // must be Signed to send to the client, still doesn't really prove the server isn't MITM replaying
     timestamp: SerializableTime,
-    #[serde(with="base64_chalresp")]
-    challenge: [u8; CHALLENGE_BYTES] // consider if this should use a better PRNG
+    challenge: [u8; CHALLENGE_BYTES]
 }
 impl ServerAuthChallenge{
     fn new() -> ServerAuthChallenge{
@@ -63,8 +73,7 @@ impl ServerAuthChallenge{
 #[derive(Deserialize)]
 struct ClientAuthResponse{
     timestamp: SerializableTime,
-    #[serde(with="base64_chalresp")]
-    response:  [u8; CHALLENGE_BYTES]
+    challenge: [u8; CHALLENGE_BYTES]
 }
 
 impl ClientAuthResponse{
@@ -82,7 +91,7 @@ impl ClientAuthResponse{
                return false; // possible but pointless timing attack, this is cheaper than verify32
         }
         else{
-            verify_32(&self.response, &server.challenge)
+            verify_32(&self.challenge, &server.challenge)
         }
     }
 }
@@ -142,11 +151,11 @@ impl Handler for ServerHandler{
                     .map_err(|_e| WsError::new(WsErrorKind::Protocol, "Failed to decode Signed ClientAuthResponse"))?;
                 if response.check(&challenge){
                     trace!("{:?} authenticated!", user_key);
-                    self.out.send(encode(&AuthResponse::AuthOk)?).unwrap();
+                    self.out.send(encode(&AuthResponse::Ok)?).unwrap();
                     next_state = Some(ClientState::Ready(user_key))
                 }
                 else{
-                    self.out.send(encode(&AuthResponse::AuthErr)?).unwrap();
+                    self.out.send(encode(&AuthResponse::Err)?).unwrap();
                     self.out.close_with_reason(CloseCode::Policy, "Failed to authenticate user").unwrap();
                 }
             },
@@ -163,7 +172,7 @@ impl Handler for ServerHandler{
                             .map_err(|_| ())
                     ),
                     Map(req) => Either::B(
-                        self.shared.map.send(req.0)
+                        self.shared.map.send(req)
                             .map_err(|_| ()) // "MapThread hung up its OneshotSender"
                             .map(move |r| out.send(encode(&r)?))
                             .map(|_| ())
@@ -261,13 +270,12 @@ pub fn spawn_thread(block_store: BlockStore, map_thread: MapThreadHandle)
 
 // command format below
 #[derive(Deserialize, Serialize)]
+#[serde(tag="Cmd")]
 enum Command{
     UploadRaw(Vec<u8>),
-    Map(MapCommand)
+    Map(map::Request)
 }
 
-#[derive(Deserialize, Serialize)]
-struct MapCommand(map::Request);
 
 #[derive(Deserialize, Serialize)]
 enum UploadResponse{
@@ -286,9 +294,10 @@ impl UploadResponse{
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(tag="Auth")]
 enum AuthResponse{
-    AuthOk,
-    AuthErr
+    Ok,
+    Err
 }
 
 fn example<P: AsRef<Path>, S: Serialize>(dir: P, filename: &'static str, message: S)
@@ -304,7 +313,7 @@ fn example<P: AsRef<Path>, S: Serialize>(dir: P, filename: &'static str, message
     let v = serialize(&message)
         .map_err(|e| io::Error::new(io::ErrorKind::Other,
                                     e))?;
-    f.write_all(v.as_bytes())
+    f.write_all(v.as_ref())
 }
 
 fn write_example_messages(){
@@ -320,20 +329,20 @@ fn write_example_messages(){
     let all = move || -> io::Result<()>{
         example(dir, "ServerAuthChallenge", ServerAuthChallenge::new())?;
         example(dir, "MapCommand_TileLibrary_Latest",
-               Command::Map(MapCommand(map::Request::TileLibrary("main".into(),
-                                       map::VerifierRequest::Latest))))?;
+               Command::Map(map::Request::TileLibrary("main".into(),
+                                                      map::VerifierRequest::Latest)))?;
         let kp = KeyPair::generate();
         let signed = Signed::sign(
             NamedHashCommand::Set("smile".into(),
                                   BlockHash::from("l6RV2N6qQRjHCvKZ47adEXMf51YwEiIj2qiKcs-7L9Y")),
                                   &kp).unwrap();
         example(dir, "MapCommand_TileLibrary_UpdateMainWithSmile",
-               MapCommand(map::Request::TileLibrary("main".into(),
-                          map::VerifierRequest::Update(signed))))
+               Command::Map(map::Request::TileLibrary("main".into(),
+                                                      map::VerifierRequest::Update(signed))))
     };
     all().unwrap_or_else(|e| error!("write_example_messages error: {:?}", e));
 }
-
+/*
 pub mod base64_chalresp{
     use serde::{Deserialize, Serializer, Deserializer};
     use base64::{self, URL_SAFE_NO_PAD};
@@ -359,4 +368,4 @@ pub mod base64_chalresp{
         Ok(array)
     }
 }
-
+*/

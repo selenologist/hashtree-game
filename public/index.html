@@ -4,13 +4,14 @@
     <script type="text/javascript" src="/lib/msgpack.min.js"></script>
     <script type="text/javascript" src="/lib/nacl-fast.min.js"></script>
     <script type="text/javascript" src="/reloader.js"></script>
+    <script type="text/javascript" src="/result.js"></script>
     <script type="text/javascript" src="/proto.js"></script>
     <script type="text/javascript" src="/main.js"></script>
     </head>
     <body>
         <h1>Hash RPG</h1>
-        <h3>Last (Raw) Message</h3>
-        <textarea rows=6 cols=100 id="rawmsg">(none)</textarea>
+        <h3>Last Message (as JSON, beware)</h3>
+        <textarea rows=6 cols=100 id="last_msg">(none)</textarea>
         <table id="debug_table"></table>
         <div id="upload_zone" class="rounded">Drop files here to upload</div>
     </body>

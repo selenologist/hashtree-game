@@ -23,17 +23,20 @@ type Responder = OneshotSender<MapResponse>;
 type Response = OneshotReceiver<MapResponse>;
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(tag="Req")]
 pub enum VerifierRequest{
     Latest,
     Update(Signed)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(tag="Obj", content="Req")]
 pub enum Request{
     TileLibrary(String, VerifierRequest)
 }
 
 #[derive(Debug, Serialize)]
+#[serde(tag="Response", content="Result")]
 pub enum MapResponse{
     Latest(Option<BlockHash>),
     VerifierResult(Result<BlockHash, VerifierError>)

@@ -1,6 +1,6 @@
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::{to_writer as serialize_file, from_reader as deserialize_file};
-use rmp_serde::{to_vec as serialize, from_slice as deserialize};
+use serde_json::{to_writer as serialize_readable_file, from_reader as deserialize_readable_file};
+use rmp_serde::{to_vec as serialize_packed, to_vec_named as serialize, from_slice as deserialize};
 use sodiumoxide::crypto::sign::ed25519::{sign as crypto_sign, verify as crypto_verify, gen_keypair};
 use rpds::HashTrieSet;
 
@@ -12,7 +12,6 @@ pub use sodiumoxide::crypto::sign::ed25519::{PublicKey, SecretKey};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Signed{
-    #[serde(with="base64_public")]
     pub user: PublicKey,
     data: Vec<u8>,
 }
@@ -73,7 +72,7 @@ pub struct KeyPair{
 impl KeyPair{
     pub fn from_file<P: AsRef<Path>>(path: P) -> io::Result<KeyPair>{
         use std::io::{Error, ErrorKind};
-        deserialize_file(fs::File::open(path)?).map_err(|e| match e {
+        deserialize_readable_file(fs::File::open(path)?).map_err(|e| match e {
             _ => Error::new(ErrorKind::InvalidData, e)
         })
     }
@@ -92,7 +91,7 @@ impl KeyPair{
         use std::io::{Error, ErrorKind};
         ::write_then_rename(
             path,
-            |writer| serialize_file(writer, &self)
+            |writer| serialize_readable_file(writer, &self)
                 .map_err(|e| Error::new(ErrorKind::InvalidInput, e)))
     }
 

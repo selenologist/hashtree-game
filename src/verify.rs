@@ -1,8 +1,8 @@
 use futures::{Future, future, future::IntoFuture};
 use sodiumoxide::crypto::sign::ed25519::{PublicKey};
 use serde::{Serialize, Deserialize};
-use rmp_serde::{to_vec as serialize, from_slice as deserialize};
-use serde_json::{to_writer as serialize_file, from_reader as deserialize_file};
+use rmp_serde::{to_vec as serialize_packed, to_vec_named as serialize, from_slice as deserialize};
+use serde_json::{to_writer as serialize_readable_file, from_reader as deserialize_readable_file};
 use rpds::{HashTrieSet, HashTrieMap};
 
 use update::{Update, Command};
@@ -67,12 +67,12 @@ impl Verifier{
     }
     
     pub fn from_reader<R: io::Read>(rdr: R) -> io::Result<Verifier>{
-        deserialize_file(rdr).map_err(|e| match e {
+        deserialize_readable_file(rdr).map_err(|e| match e {
             _ => io::Error::new(io::ErrorKind::InvalidData, e)
         })
     }
     pub fn to_writer<W: io::Write>(&self, wtr: W) -> io::Result<()>{
-        serialize_file(wtr, &self).map_err(|e| match e{
+        serialize_readable_file(wtr, &self).map_err(|e| match e{
             /*
             InvalidValueWrite(ValueWriteError::InvalidMarkerWrite(e)) => e,
             InvalidValueWrite(ValueWriteError::InvalidDataWrite(e)) => e,
