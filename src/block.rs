@@ -10,21 +10,83 @@ use futures::{sync::mpsc::{UnboundedReceiver, UnboundedSender,
 use sha2::{Sha256, Digest};
 use base64;
 use lru_cache::LruCache;
+use serde::{Deserialize, Deserializer, de::{self, Visitor}};
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::io::{self, Read};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::fmt::{self, Debug};
+use std::collections::HashSet; // not to be confused with rpds::HashTrieSet
+use std::str::FromStr;
 
-// XXX intern these?
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct StringInterner(RwLock<HashSet<Arc<String>>>); // Weak does not implement Hash
+
+impl StringInterner{
+    fn intern<T: Into<String>>(&self, s: T) -> Arc<String>{
+        let s = s.into();
+        { // try getting an already interned value using read part of a RwLock
+            let r = self.0.read().unwrap();
+            if let Some(interned) = r.get(&s){
+                return interned.clone();
+            }
+        }
+        { // warning: it is seemingly possible for a writer to write between our read and acquiring a write lock
+            let mut w = self.0.write().unwrap();
+            let a = Arc::new(s); // strong_count = 1
+            w.insert(a.clone()); // strong_count = 2
+            // purge any value in the set with a strong_count <= 1 (i.e. only referenced in the set)
+            // XXX: do this less often, it's very inefficient
+            trace!("{} interned strings", w.len());
+            if w.len() > 256{ // crappy threshold for attempting to purge entries, this should be replaced with something that adjusts for how many typically remain
+                w.retain(|e|{
+                    trace!("{} references to {}", Arc::strong_count(e), e);
+                    Arc::strong_count(e) > 1
+                });
+            }
+            else{
+                w.iter().for_each(|e| trace!("{} references to {}", Arc::strong_count(e), e));
+            }
+            return a;
+        }
+    }
+}
+
+lazy_static!{
+    static ref GLOBAL_STRING_INTERNER: StringInterner =
+        StringInterner(RwLock::new(HashSet::new()));
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct BlockHash(pub Arc<String>);
 
-impl From<&'static str> for BlockHash{
-    fn from(s: &'static str) -> BlockHash{
-        BlockHash(Arc::new(String::from(s)))
+impl<'a> From<&'a str> for BlockHash{
+    fn from(s: &'a str) -> BlockHash{
+        BlockHash(GLOBAL_STRING_INTERNER.intern(s))
+    }
+}
+
+struct BHVisitor;
+impl<'de> Visitor<'de> for BHVisitor{
+    type Value = BlockHash;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "a string")
+    }
+
+    fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+        where E: de::Error
+    {
+        Ok(BlockHash::from(s))
+    }
+}
+
+impl<'de> Deserialize<'de> for BlockHash{
+    fn deserialize<D>(deserializer: D) -> Result<BlockHash, D::Error>
+        where D: Deserializer<'de>
+    {
+        deserializer.deserialize_str(BHVisitor)
     }
 }
 
