@@ -39,7 +39,7 @@ class encode
                'secret': (encode.SecretB64 secret).unwrap())
         catch e
             Err(e)
-    @eypairJson: (pubkey, secret) ->
+    @KeypairJson: (pubkey, secret) ->
         try
             obj = KeypairB64(pubkey, secret).unwrap()
             encode.Json(obj)
