@@ -50,12 +50,14 @@ extern crate lazy_static;
 extern crate notify;
 extern crate subprocess;
 
+extern crate sled;
+
 mod router;
 mod block;
 mod signed;
 mod verify;
 mod update;
-mod websocket;
+//mod websocket;
 mod http;
 mod ltime;
 mod tile;

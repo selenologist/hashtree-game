@@ -10,21 +10,42 @@ use futures::{sync::mpsc::{UnboundedReceiver, UnboundedSender,
 use sha2::{Sha256, Digest};
 use base64;
 use lru_cache::LruCache;
+use sled;
 
 use std::sync::Arc;
 use std::thread;
-use std::io::{self, Read};
-use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::fmt::{self, Debug};
 
-// XXX intern these?
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct BlockHash(pub Arc<String>);
+const SHA256_BYTES: usize = 256 / 8;
 
-impl From<&'static str> for BlockHash{
-    fn from(s: &'static str) -> BlockHash{
-        BlockHash(Arc::new(String::from(s)))
+// XXX intern these?
+// YYY no don't, not yet, we don't create enough to make the interning table worth it. (Apr 27)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BlockHash(pub Arc<[u8; SHA256_BYTES]>);
+
+impl<'a> From<&'a str> for BlockHash{
+    fn from(s: &'a str) -> BlockHash{
+        use base64::URL_SAFE_NO_PAD;
+        let mut bytes: [u8; SHA256_BYTES];
+        base64::decode_config_slice(&s, URL_SAFE_NO_PAD, &mut bytes)
+            .unwrap();
+        BlockHash(Arc::new(bytes))
+    }
+}
+
+impl<'a> From<&'a [u8]> for BlockHash{
+    fn from(s: &'a [u8]) -> BlockHash{
+        let mut a: [u8; SHA256_BYTES];
+        a.clone_from_slice(s);
+        BlockHash(Arc::new(a))
+    }
+}
+
+impl BlockHash{
+    pub fn as_bytes<'a>(&'a self) -> &'a [u8]{
+        &self.0[..]
     }
 }
 
@@ -69,49 +90,53 @@ impl Debug for BlockStore{
 // Number of chunks to cache in LRU.
 // A chunk is expected to be not larger than 64K.
 // So i.e. 256 chunks would be approx 16MB + hash space + pointers.
+// sled probably does caching of its own, but this should keep the block in
+// an Arc and thus serve as in-memory deduplication.
 const BLOCK_STORE_LRU_CAPACITY: usize = 256;
 struct BlockStoreThread{
-    directory: PathBuf,
+    store: sled::Tree,
     cache: LruCache<BlockHash, BlockData>
 }
 
 impl BlockStoreThread{
     fn get(&mut self, hash: BlockHash) -> io::Result<BlockData>{
-        let data = {
-            let BlockHash(ref string) = hash;
-            let full_path = self.directory.join(Path::new(string.as_ref()));
-            
-            let mut file = fs::File::open(&full_path)?;
-            let mut data = Vec::with_capacity(file.metadata()?.len() as usize);
-            file.read_to_end(&mut data)?;
-            data
-        };
-            
+        // cache is tried before this function is called
+        
+        use sled::Error::*;
+        let data = self.store.get(hash.as_bytes())
+            .map_err(|e| match e{
+                Io(ie) => ie,
+                CasFailed(_) =>
+                    io::Error::new(io::ErrorKind::Interrupted, e),
+                Unsupported(_) =>
+                    io::Error::new(io::ErrorKind::InvalidInput, e),
+                ReportableBug(s) =>
+                    io::Error::new(io::ErrorKind::Other, s),
+                Corruption{at} =>
+                    io::Error::new(io::ErrorKind::InvalidData,
+                                   format!("Corruption at {}", at))
+            })
+            .and_then(|r|
+                      r.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound,
+                                                     "BlockHash not found")))?;
         let block_data = Arc::new(data);
         self.cache.insert(hash, block_data.clone());
         Ok(block_data)
     }
 
     fn set(&mut self, data: BlockData) -> io::Result<BlockHash>{
-        // ensure directory exists
-        if let Err(e) = fs::create_dir_all(&self.directory){
-            trace!("Failed to create dir {:?}", self.directory);
-            return Err(e);
-        }
-       
         // hash data
-        let hash_binary = Sha256::digest(data.as_slice());
-        let hash_string = base64::encode_config(hash_binary.as_slice(),
-                          base64::URL_SAFE_NO_PAD);
-        // create file named after the sha256sum of its contents
-        let full_path = self.directory.join(Path::new(&hash_string));
-        ::write_then_rename(full_path,
-                            |file| file.write_all(data.as_slice()))?;
+        let hash_digest = Sha256::digest(data.as_slice());
+        let hash = BlockHash::from(&hash_digest[..]);
 
-        let block_hash = BlockHash(Arc::new(hash_string));
-        self.cache.insert(block_hash.clone(), data);
+        // why on earth does sled need to own a vec ಠ_ಠ
+        let key = hash.as_bytes().to_vec();
+        let value = (*data).clone();
+        self.store.set(key, value);
 
-        Ok(block_hash)
+        self.cache.insert(hash.clone(), data);
+
+        Ok(hash)
     }
 
     fn run(mut self, receiver: UnboundedReceiver<BlockRequest>){
@@ -137,16 +162,44 @@ impl BlockStoreThread{
     }
 }
                 
-pub fn spawn_thread(directory: PathBuf) -> BlockStore{
+pub fn spawn_thread<P: AsRef<Path>>(path: P) -> BlockStore{
     let (sender, receiver) = unbounded_channel();
+    let path: PathBuf = path.as_ref().to_path_buf(); // need to own to move into new thread
 
     let _thread = thread::Builder::new()
         .name("BlockStore".into())
-        .spawn(move ||
-        BlockStoreThread{
-            directory,
-            cache: LruCache::new(BLOCK_STORE_LRU_CAPACITY)
-        }.run(receiver));
+        .spawn(move ||{
+            let store =
+                sled::Tree::start(sled::ConfigBuilder::new().path(path).build())
+                .unwrap_or_else(|e| panic!("failed to open sled {:?}", path.as_path()));
+            BlockStoreThread{
+                store,
+                cache: LruCache::new(BLOCK_STORE_LRU_CAPACITY)
+            }.run(receiver)
+        });
 
     BlockStore(sender)
 }
+
+pub mod base64_blockhash{
+    use serde::{Deserialize, Serializer, Deserializer};
+    use base64::{self, URL_SAFE_NO_PAD};
+    use super::{SHA256_BYTES, BlockHash};
+    pub fn serialize<S>(t: &BlockHash, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer
+    {
+        let s = base64::encode_config(t.0.as_ref(), URL_SAFE_NO_PAD);
+        serializer.serialize_str(&s)
+    }
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BlockHash, D::Error>
+        where D: Deserializer<'de>
+    {
+        use serde::de::Error;
+        let s = String::deserialize(deserializer)?;
+        let mut bytes: [u8; SHA256_BYTES];
+        base64::decode_config_slice(&s, URL_SAFE_NO_PAD, &mut bytes)
+            .map_err(|e| Error::custom(e.to_string()))?;
+        Ok(BlockHash::from(&bytes[..]))
+    }
+}
+

@@ -136,8 +136,7 @@ class Proto
         last: [latest]
 
     VerifierResult: (vr) ->
-        # fuuucking hell. std::Result will be serialized using an integer variant key.
-        # I need a serialization scheme with less friction.
+        # std::Result, so variant 0 is Ok and variant 1 is Err
         if vr[0] == 0 # Ok
             Ok(vr[1][0]) # BlockHash
         else # Err

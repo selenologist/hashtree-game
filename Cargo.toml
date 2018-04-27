@@ -30,4 +30,4 @@ regex        = "0.2.10"
 lazy_static  = "1.0.0"
 notify       = "4.0.0"
 subprocess   = "0.1.12"
-
+sled         = "0.15.14"

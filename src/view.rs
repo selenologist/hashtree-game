@@ -123,7 +123,7 @@ fn navigate<F>(block_store: &BlockStore, depth: usize, f: Box<F>)
 pub fn main(type_string: String, block_string: String)
 {
     let block_store = spawn_block_thread(PathBuf::from("public/blocks/"));
-    let block_hash = BlockHash(Arc::new(block_string));
+    let block_hash = BlockHash::from(block_string.as_str());
     let next = Box::new(move |bs: BlockStore| -> NavigationResult {
         match type_string.as_str(){
             "test"  =>

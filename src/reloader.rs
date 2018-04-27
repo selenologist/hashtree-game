@@ -50,9 +50,9 @@ impl Factory for ServerFactory{
     }
 }
 
-pub fn spawn_thread(pubsub: PubSubHandle<FileEvent>)
+pub fn spawn_thread(pubsub: PubSubHandle<FileEvent>) -> thread::JoinHandle<()>
 {
-    let _thread = thread::Builder::new()
+    let thread = thread::Builder::new()
         .name("reloader".into())
         .spawn(move || {
             let factory = ServerFactory;
@@ -99,5 +99,7 @@ pub fn spawn_thread(pubsub: PubSubHandle<FileEvent>)
             let join = handle.join();
             panic!("reloader broadcast thread joined: {:?}", join)
         }).unwrap();
+
+    thread
 }
 
